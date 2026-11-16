@@ -5,7 +5,7 @@
 # "none" to remove a default binding. Two actions on the same key in one scope
 # is a conflict, and the later one is refused.
 #
-# Scopes: global, editor, context, results, completion, dialog.
+# Scopes: global, editor, context, results, completion, picker, prompt, dialog.
 # The editor and global scopes cannot bind printable characters, because the
 # editor must always accept typing. Use Ctrl, Alt or function keys there.
 #
@@ -45,6 +45,14 @@
 "alt+left" = "buffer.prev"
 "ctrl+pageup" = "buffer.prev"
 "alt+t" = "buffer.reopen"
+"ctrl+o" = "connection.open"
+"alt+o" = "connection.reconnect"
+# Ctrl+Enter is not sent by many terminals, so F5 and Alt+Enter also run.
+"ctrl+enter" = "query.run_statement"
+"alt+enter" = "query.run_statement"
+"f5" = "query.run_statement"
+# Cancels the running query. Does nothing when no query is running.
+"ctrl+c" = "query.cancel"
 
 [editor]
 "left" = "editor.move_left"
@@ -102,6 +110,31 @@
 
 [results]
 "?" = "help.toggle"
+"up" = "results.scroll_up"
+"down" = "results.scroll_down"
+"pageup" = "results.page_up"
+"pagedown" = "results.page_down"
+"home" = "results.first_row"
+"end" = "results.last_row"
+"left" = "results.scroll_left"
+"right" = "results.scroll_right"
+"[" = "results.prev_tab"
+"]" = "results.next_tab"
+
+[picker]
+"up" = "dialog.prev"
+"down" = "dialog.next"
+"enter" = "dialog.submit"
+"esc" = "dialog.cancel"
+"backspace" = "dialog.backspace"
+"ctrl+u" = "dialog.clear"
+"ctrl+s" = "picker.save_profile"
+
+[prompt]
+"enter" = "dialog.submit"
+"esc" = "dialog.cancel"
+"backspace" = "dialog.backspace"
+"ctrl+u" = "dialog.clear"
 
 [dialog]
 "up" = "help.scroll_up"

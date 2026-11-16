@@ -5,9 +5,6 @@
 //! this version cannot interpret, and options it does not know, are kept and
 //! written back, so editing one profile never destroys another.
 
-// Used by the connection layer, which lands in the next change. Remove this then.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;

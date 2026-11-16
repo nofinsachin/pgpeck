@@ -37,3 +37,8 @@ show_context_strip = true
 #   env       $PGPASSWORD, or the variable named by a profile's password_env
 #   prompt    ask in the interface
 password_sources = ["keychain", "pgpass", "env", "prompt"]
+
+[results]
+# Rows kept in memory per result. Further rows are counted but not stored, and
+# the results header says so. Range 1 to 1000000.
+row_limit = 10000

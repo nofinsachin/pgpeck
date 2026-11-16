@@ -5,14 +5,14 @@
 │4    where name = 'a;b' and n > 10;                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ Context ─────────────────────────────────────────────────────────────────────┐
-│Objects used by the current statement (phase 6)                               │
+│Not connected. Press Ctrl+O to connect.                                       │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ Results ─────────────────────────────────────────────────────────────────────┐
-│Query results (phase 4)                                                       │
+│No results yet. Run a statement with F5.                                      │
 │                                                                              │
 │                                                                              │
 │                                                                              │
@@ -20,5 +20,5 @@
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-F1 help  F6 next pane  Alt+2 focus editor  F3 toggle context strip  Ctrl+Q quit
+F5 run statement  Ctrl+O connect  F1 help  F6 next pane  Ctrl+Q quit
  no connection │ focus: Editor │ Ln 4, Col 34

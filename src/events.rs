@@ -8,12 +8,48 @@ use std::time::Duration;
 use crossterm::event::{self, Event as TermEvent, KeyEvent, KeyEventKind};
 use tokio::sync::mpsc::UnboundedSender;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use crate::command::DocId;
+use crate::db::{ConnId, ConnectionInfo, DbError, QueryOutput};
+
+#[derive(Debug, Clone)]
 pub enum Event {
     Key(KeyEvent),
     Resize(u16, u16),
     /// Text pasted through bracketed paste. It is data, never keystrokes.
     Paste(String),
+    /// A timer tick, sent only while something needs the screen refreshed
+    /// (a running query's elapsed time).
+    Tick,
+    /// A result from work running in the background.
+    Background(Background),
+}
+
+/// What background tasks report back.
+#[derive(Debug, Clone)]
+pub enum Background {
+    /// No stored password was found. The app should ask (R2.1).
+    PasswordNeeded {
+        conn: ConnId,
+        notes: Vec<String>,
+    },
+    Connected {
+        conn: ConnId,
+        info: ConnectionInfo,
+    },
+    ConnectFailed {
+        conn: ConnId,
+        error: DbError,
+    },
+    ConnectionClosed {
+        conn: ConnId,
+        reason: String,
+    },
+    QueryFinished {
+        conn: ConnId,
+        doc: DocId,
+        output: QueryOutput,
+    },
+    ProfilesSaved(Result<(), String>),
 }
 
 /// Starts the input thread. It stops when the receiver is dropped or the

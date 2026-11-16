@@ -746,6 +746,11 @@ impl Buffer {
         Pos::new(at.line, col)
     }
 
+    /// Byte offset of the cursor in `text()`.
+    pub fn cursor_offset(&self) -> usize {
+        self.offset_of(self.cursor)
+    }
+
     // -- completion ---------------------------------------------------------
 
     /// The word being typed at the cursor and where it starts. `None` inside

@@ -11,6 +11,13 @@ pub struct Config {
     pub editor: EditorConfig,
     pub ui: UiConfig,
     pub connections: ConnectionsConfig,
+    pub results: ResultsConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultsConfig {
+    /// Rows kept per result. More are counted but not stored (R12.9, PRF-005).
+    pub row_limit: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +64,7 @@ impl Default for Config {
                 completion: true,
                 completion_min_chars: 2,
             },
+            results: ResultsConfig { row_limit: 10_000 },
             connections: ConnectionsConfig {
                 password_sources: Source::default_order(),
             },
@@ -84,6 +92,7 @@ const SCHEMA: &[(&str, &[&str])] = &[
     ),
     ("ui", &["theme", "show_hint_bar", "show_context_strip"]),
     ("connections", &["password_sources"]),
+    ("results", &["row_limit"]),
 ];
 
 impl Config {
@@ -165,6 +174,13 @@ impl Config {
             }
             ("ui", "show_hint_bar") => self.ui.show_hint_bar = want_bool(value)?,
             ("ui", "show_context_strip") => self.ui.show_context_strip = want_bool(value)?,
+            ("results", "row_limit") => {
+                self.results.row_limit = value
+                    .as_integer()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| (1..=1_000_000).contains(n))
+                    .ok_or("expected a whole number from 1 to 1000000")?;
+            }
             ("connections", "password_sources") => {
                 self.connections.password_sources = parse_sources(value)?;
             }
@@ -250,6 +266,18 @@ mod tests {
         let (config, diags) = Config::parse("[editor]\nindent_width = 2\n");
         assert!(diags.is_empty());
         assert_eq!(config.editor.indent_width, 2);
+    }
+
+    #[test]
+    fn row_limit_is_range_checked() {
+        for bad in ["0", "1000001", "-5", "\"10\""] {
+            let (config, diags) = Config::parse(&format!("[results]\nrow_limit = {bad}\n"));
+            assert_eq!(config.results.row_limit, 10_000, "{bad}");
+            assert_eq!(diags.len(), 1, "{bad}");
+        }
+        let (config, diags) = Config::parse("[results]\nrow_limit = 500\n");
+        assert!(diags.is_empty());
+        assert_eq!(config.results.row_limit, 500);
     }
 
     #[test]

@@ -1,15 +1,18 @@
 //! Rendering only. Reads state and draws it. No I/O, no state changes.
 
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, HelpLine, Pane};
+use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
+use crate::db::{DbError, ResultSet};
 use crate::editor::{cell_width, display_col, Pos};
 use crate::keymap::{Action, Scope};
 use crate::layout;
+use crate::picker::{self, Item};
+use crate::results::Tab;
 use crate::sql::{self, Token, TokenKind};
 use crate::theme::Theme;
 
@@ -32,10 +35,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         draw_editor(frame, app, theme, rect);
     }
     if let Some(rect) = areas.context {
-        draw_placeholder(frame, app, theme, Pane::Context, rect);
+        draw_context(frame, app, theme, rect);
     }
     if let Some(rect) = areas.results {
-        draw_placeholder(frame, app, theme, Pane::Results, rect);
+        draw_results(frame, app, theme, rect);
     }
     if let (Some(rect), Some(_)) = (areas.editor, &app.state.completion) {
         draw_completion(frame, app, theme, rect);
@@ -46,6 +49,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     draw_status_bar(frame, app, theme, areas.status);
     if app.state.help_open {
         draw_help(frame, app, theme, area);
+    }
+    match &app.state.dialog {
+        Some(Dialog::Picker(picker)) => draw_picker(frame, app, theme, picker, area),
+        Some(Dialog::Password(_)) => draw_password(frame, app, theme, area),
+        None => {}
     }
 }
 
@@ -75,16 +83,348 @@ fn pane_block<'a>(app: &App, theme: &Theme, pane: Pane) -> Block<'a> {
         .title_style(style)
 }
 
-fn draw_placeholder(frame: &mut Frame, app: &App, theme: &Theme, pane: Pane, area: Rect) {
-    let text = match pane {
-        Pane::Editor => "",
-        Pane::Context => "Objects used by the current statement (phase 6)",
-        Pane::Results => "Query results (phase 4)",
+/// Keys shown in messages come from the keymap, never from the code.
+fn key_text(app: &App, action: Action) -> String {
+    app.hint_key(action)
+        .map_or_else(|| "(unbound)".to_string(), |k| k.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Context pane (connection details until the explorer arrives)
+// ---------------------------------------------------------------------------
+
+fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let dim = Style::new().fg(theme.dimmed);
+    let lines: Vec<Line> = match app.state.active_connection() {
+        None => vec![Line::styled(
+            format!(
+                "Not connected. Press {} to connect.",
+                key_text(app, Action::ConnectionOpen)
+            ),
+            dim,
+        )],
+        Some(conn) => connection_lines(app, theme, conn),
     };
-    let body = Paragraph::new(text)
-        .style(Style::new().fg(theme.dimmed))
-        .block(pane_block(app, theme, pane));
+    let body = Paragraph::new(lines).block(pane_block(app, theme, Pane::Context));
     frame.render_widget(body, area);
+}
+
+fn connection_lines<'a>(app: &App, theme: &Theme, conn: &'a Connection) -> Vec<Line<'a>> {
+    let dim = Style::new().fg(theme.dimmed);
+    let bold = Style::new().add_modifier(Modifier::BOLD);
+    let mut lines = vec![Line::from(vec![
+        Span::styled(conn.label().to_string(), bold),
+        Span::styled(format!("  {}", status_word(&conn.status)), dim),
+    ])];
+    match (&conn.status, &conn.info) {
+        (ConnStatus::Connected, Some(info)) => {
+            lines.push(Line::raw(format!(
+                "{}:{}  PostgreSQL {}",
+                info.host, info.port, info.server_version
+            )));
+            lines.push(Line::raw(format!(
+                "database {}  user {}",
+                info.database, info.user
+            )));
+            let tls = if info.tls {
+                "TLS on"
+            } else {
+                "TLS off: traffic is not encrypted"
+            };
+            lines.push(Line::styled(
+                tls,
+                if info.tls {
+                    dim
+                } else {
+                    Style::new().fg(theme.error)
+                },
+            ));
+        }
+        (ConnStatus::Failed(message) | ConnStatus::Closed(message), _) => {
+            lines.push(Line::styled(message.clone(), Style::new().fg(theme.error)));
+            lines.push(Line::styled(
+                format!(
+                    "Press {} to reconnect.",
+                    key_text(app, Action::ConnectionReconnect)
+                ),
+                dim,
+            ));
+        }
+        _ => {}
+    }
+    lines
+}
+
+fn status_word(status: &ConnStatus) -> &'static str {
+    match status {
+        ConnStatus::Connecting => "connecting",
+        ConnStatus::AwaitingPassword => "waiting for a password",
+        ConnStatus::Connected => "connected",
+        ConnStatus::Failed(_) => "failed",
+        ConnStatus::Closed(_) => "disconnected",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Results pane
+// ---------------------------------------------------------------------------
+
+fn format_elapsed(d: std::time::Duration) -> String {
+    if d.as_millis() < 1000 {
+        format!("{} ms", d.as_millis())
+    } else {
+        format!("{:.2} s", d.as_secs_f64())
+    }
+}
+
+/// One line of cell text: control characters are made visible or removed so
+/// a value cannot break the grid.
+fn clean_cell(text: &str) -> String {
+    text.chars()
+        .filter_map(|c| match c {
+            '\n' | '\r' => Some('↵'),
+            '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
+}
+
+/// `text` cut or padded to exactly `width` terminal cells.
+fn fit(text: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    let total: usize = text.chars().map(cell_width).sum();
+    let limit = if total > width {
+        width.saturating_sub(1)
+    } else {
+        width
+    };
+    for c in text.chars() {
+        let w = cell_width(c);
+        if used + w > limit {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    if total > width && width > 0 {
+        out.push('…');
+        used += 1;
+    }
+    out.extend(std::iter::repeat_n(' ', width.saturating_sub(used)));
+    out
+}
+
+const MAX_COLUMN_WIDTH: usize = 40;
+const WIDTH_SAMPLE_ROWS: usize = 200;
+
+fn column_widths(set: &ResultSet) -> Vec<usize> {
+    let mut widths: Vec<usize> = set
+        .columns
+        .iter()
+        .map(|c| clean_cell(c).chars().map(cell_width).sum())
+        .collect();
+    for row in set.rows.iter().take(WIDTH_SAMPLE_ROWS) {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            let text = cell
+                .as_deref()
+                .map_or(4, |t| clean_cell(t).chars().map(cell_width).sum());
+            *width = (*width).max(text);
+        }
+    }
+    widths
+        .iter()
+        .map(|w| (*w).clamp(1, MAX_COLUMN_WIDTH))
+        .collect()
+}
+
+fn draw_results(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
+    frame.render_widget(pane_block(app, theme, Pane::Results), pane);
+    let st = &app.state;
+    let dim = Style::new().fg(theme.dimmed);
+    let results = st.doc().results.as_ref();
+    let tab_count = results.map_or(0, |r| r.tab_count());
+    let body = layout::results_body(pane, tab_count > 1);
+
+    let running_here = st.running.as_ref().filter(|r| r.doc == st.doc().id);
+    let summary = if let Some(running) = running_here {
+        Line::styled(
+            format!(
+                "Running… {}  ({} cancels)",
+                format_elapsed(running.started.elapsed()),
+                key_text(app, Action::QueryCancel)
+            ),
+            Style::new().add_modifier(Modifier::BOLD),
+        )
+    } else if let Some(r) = results {
+        summary_line(r.current(), r.output.elapsed, theme)
+    } else {
+        Line::styled(
+            format!(
+                "No results yet. Run a statement with {}.",
+                key_text(app, Action::QueryRun)
+            ),
+            dim,
+        )
+    };
+    frame.render_widget(Paragraph::new(summary), body.summary);
+
+    let Some(results) = results else { return };
+    if let Some(tabs_area) = body.tabs {
+        let mut spans = Vec::new();
+        for index in 0..results.tab_count() {
+            let label = match results.tab(index) {
+                Some(Tab::Set(set)) => set.tag.clone(),
+                _ => "Error".to_string(),
+            };
+            let style = if index == results.tab {
+                Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            spans.push(Span::styled(format!(" {} {label} ", index + 1), style));
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            format!(
+                "({} {})",
+                key_text(app, Action::ResultsPrevTab),
+                key_text(app, Action::ResultsNextTab)
+            ),
+            dim,
+        ));
+        frame.render_widget(Paragraph::new(Line::from(spans)), tabs_area);
+    }
+
+    match results.current() {
+        Some(Tab::Set(set)) if set.returns_rows() => {
+            draw_grid(frame, theme, set, results.row, results.col, &body)
+        }
+        Some(Tab::Error(error)) => {
+            draw_error_details(frame, theme, error, body.header.union(body.rows))
+        }
+        _ => {}
+    }
+}
+
+fn summary_line<'a>(tab: Option<Tab<'_>>, elapsed: std::time::Duration, theme: &Theme) -> Line<'a> {
+    let took = format_elapsed(elapsed);
+    match tab {
+        Some(Tab::Set(set)) if set.returns_rows() => {
+            let rows = if set.truncated() {
+                format!(
+                    "showing the first {} of {} rows (row limit)",
+                    set.rows.len(),
+                    set.total_rows
+                )
+            } else {
+                format!(
+                    "{} row{}",
+                    set.total_rows,
+                    if set.total_rows == 1 { "" } else { "s" }
+                )
+            };
+            Line::from(format!("{}  ·  {rows}  ·  {took}", set.tag))
+        }
+        Some(Tab::Set(set)) => Line::from(format!("{}  ·  {took}", set.tag)),
+        Some(Tab::Error(error)) => {
+            let code = error
+                .sqlstate
+                .as_deref()
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default();
+            Line::styled(
+                format!("ERROR{code}: {}", clean_cell(&error.message)),
+                Style::new().fg(theme.error).add_modifier(Modifier::BOLD),
+            )
+        }
+        None => Line::raw(""),
+    }
+}
+
+fn draw_error_details(frame: &mut Frame, theme: &Theme, error: &DbError, area: Rect) {
+    let mut lines = Vec::new();
+    if let Some(detail) = &error.detail {
+        lines.push(Line::raw(format!("Detail: {}", clean_cell(detail))));
+    }
+    if let Some(hint) = &error.hint {
+        lines.push(Line::raw(format!("Hint: {}", clean_cell(hint))));
+    }
+    if let Some(position) = error.position {
+        lines.push(Line::styled(
+            format!("Position: character {position} of the statement"),
+            Style::new().fg(theme.dimmed),
+        ));
+    }
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn draw_grid(
+    frame: &mut Frame,
+    theme: &Theme,
+    set: &ResultSet,
+    first_row: usize,
+    first_col: usize,
+    body: &layout::ResultsBody,
+) {
+    let widths = column_widths(set);
+    let total_width = usize::from(body.rows.width);
+    if total_width == 0 {
+        return;
+    }
+    // Which columns fit, starting at `first_col`. The last may be cut.
+    let mut visible: Vec<(usize, usize)> = Vec::new();
+    let mut used = 0;
+    for (index, width) in widths.iter().enumerate().skip(first_col) {
+        let separator = if visible.is_empty() { 0 } else { 3 };
+        if used + separator >= total_width {
+            break;
+        }
+        let shown = (*width).min(total_width - used - separator);
+        visible.push((index, shown));
+        used += separator + shown;
+    }
+
+    let separator = || Span::styled(" │ ", Style::new().fg(theme.dimmed));
+    let header_style = Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    let mut header = Vec::new();
+    for (n, (index, width)) in visible.iter().enumerate() {
+        if n > 0 {
+            header.push(separator());
+        }
+        header.push(Span::styled(
+            fit(&clean_cell(&set.columns[*index]), *width),
+            header_style,
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(header)), body.header);
+
+    let null_style = Style::new()
+        .fg(theme.null)
+        .add_modifier(Modifier::ITALIC | Modifier::DIM);
+    let lines: Vec<Line> = set
+        .rows
+        .iter()
+        .skip(first_row)
+        .take(usize::from(body.rows.height))
+        .map(|row| {
+            let mut spans = Vec::new();
+            for (n, (index, width)) in visible.iter().enumerate() {
+                if n > 0 {
+                    spans.push(separator());
+                }
+                // NULL is shown as a word in its own style, so it cannot be
+                // mistaken for an empty string or for a text value (R12.3).
+                spans.push(match row.get(*index).and_then(Option::as_deref) {
+                    Some(text) => Span::raw(fit(&clean_cell(text), *width)),
+                    None => Span::styled(fit("NULL", *width), null_style),
+                });
+            }
+            Line::from(spans)
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), body.rows);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,22 +695,281 @@ fn draw_hint_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
+/// Black or white, whichever reads better on `bg`.
+fn readable_on(bg: Color, theme: &Theme) -> Color {
+    let light = match bg {
+        Color::Rgb(r, g, b) => {
+            // Perceived brightness, 0 to 255.
+            (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000 > 140
+        }
+        Color::White
+        | Color::Gray
+        | Color::Yellow
+        | Color::LightYellow
+        | Color::Cyan
+        | Color::LightCyan
+        | Color::LightGreen
+        | Color::Green
+        | Color::LightBlue
+        | Color::LightMagenta
+        | Color::LightRed => true,
+        _ => false,
+    };
+    if light {
+        Color::Black
+    } else if bg == theme.status_bg {
+        theme.status_fg
+    } else {
+        Color::White
+    }
+}
+
+/// The connection part of the status bar (R3.1).
+fn connection_text(app: &App) -> String {
+    let Some(conn) = app.state.active_connection() else {
+        return "no connection".to_string();
+    };
+    let label = conn.label();
+    match (&conn.status, &conn.info) {
+        (ConnStatus::Connected, Some(info)) => {
+            let prod = if conn.profile.production { "PROD " } else { "" };
+            let tls = if info.tls { "TLS" } else { "no TLS" };
+            format!("{prod}{label} │ {} │ {} │ {tls}", info.database, info.user)
+        }
+        (ConnStatus::Connecting, _) => format!("connecting to {label}…"),
+        (ConnStatus::AwaitingPassword, _) => format!("{label}: waiting for a password"),
+        (ConnStatus::Failed(_), _) => format!("{label}: connection failed"),
+        (ConnStatus::Closed(_), _) => format!("{label}: disconnected"),
+        (ConnStatus::Connected, None) => label.to_string(),
+    }
+}
+
 fn draw_status_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let st = &app.state;
     let cursor = st.editor().cursor();
     let mut text = format!(
-        " no connection │ focus: {} │ Ln {}, Col {}",
+        " {} │ focus: {} │ Ln {}, Col {}",
+        connection_text(app),
         st.focus.label(),
         cursor.line + 1,
         cursor.col + 1
     );
-    if let Some(notice) = &st.notice {
-        text.push_str(" │ ");
-        text.push_str(notice);
+    if let Some(running) = st.running.as_ref().filter(|r| r.doc == st.doc().id) {
+        text.push_str(&format!(
+            " │ running {}",
+            format_elapsed(running.started.elapsed())
+        ));
+    } else if let Some(results) = &st.doc().results {
+        text.push_str(&format!(
+            " │ last run {}",
+            format_elapsed(results.output.elapsed)
+        ));
     }
+    // The notice is temporary, so it gets whatever room is left and is cut
+    // first. The connection and focus must always stay visible (R3.1, R4.2).
+    if let Some(notice) = &st.notice {
+        let used = text.chars().count() + 3;
+        let room = usize::from(area.width).saturating_sub(used);
+        if room >= 12 {
+            text.push_str(" │ ");
+            text.push_str(fit(notice, room).trim_end());
+        }
+    }
+
+    // A production connection gets its own color and the word PROD, so it is
+    // never marked by color alone (R1.6, R20.9). A profile color tints the bar (R3.5).
+    let conn = st
+        .active_connection()
+        .filter(|c| c.status == ConnStatus::Connected);
+    let bg = match conn {
+        Some(c) if c.profile.production => theme.status_prod,
+        Some(c) => c.profile.color_value().unwrap_or(theme.status_bg),
+        None => theme.status_bg,
+    };
+    let mut style = Style::new().fg(readable_on(bg, theme)).bg(bg);
+    if conn.is_some_and(|c| c.profile.production) {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    frame.render_widget(Paragraph::new(text).style(style), area);
+}
+
+// ---------------------------------------------------------------------------
+// Dialogs
+// ---------------------------------------------------------------------------
+
+/// Hides the password inside a connection URI before it is shown (R2.3).
+fn redact_uri(text: &str) -> String {
+    let Some(start) = text.find("://").map(|i| i + 3) else {
+        return text.to_string();
+    };
+    let rest = &text[start..];
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    let Some(at) = rest[..authority_end].rfind('@') else {
+        return text.to_string();
+    };
+    let Some(colon) = rest[..at].find(':') else {
+        return text.to_string();
+    };
+    format!(
+        "{}{}{}",
+        &text[..start + colon + 1],
+        "•".repeat(rest[colon + 1..at].chars().count().min(12)),
+        &rest[at..]
+    )
+}
+
+fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Picker, area: Rect) {
+    let dim = Style::new().fg(theme.dimmed);
+    let items = picker.items(&app.state.profiles);
+    let visible = items.len().clamp(1, 8);
+    let popup = layout::centered(area, 72, visible as u16 + 6);
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Connect ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.focus));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height < 3 {
+        return;
+    }
+
+    let shown = redact_uri(&picker.input);
+    let prompt = format!("> {shown}");
+    frame.render_widget(Paragraph::new(prompt.clone()), Rect { height: 1, ..inner });
+    let cursor_x = inner.x
+        + prompt
+            .chars()
+            .map(cell_width)
+            .sum::<usize>()
+            .min(usize::from(inner.width.saturating_sub(1))) as u16;
+    frame.set_cursor_position((cursor_x, inner.y));
+
+    let list = Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(3),
+        ..inner
+    };
+    let top = (picker.selected + 1).saturating_sub(usize::from(list.height));
+    let mut lines: Vec<Line> = Vec::new();
+    for (index, item) in items
+        .iter()
+        .enumerate()
+        .skip(top)
+        .take(usize::from(list.height))
+    {
+        let selected = index == picker.selected;
+        let marker = if selected { "▶ " } else { "  " };
+        let text = match item {
+            Item::Uri(_) => "Connect to this address".to_string(),
+            Item::Profile(name) => match app.state.profiles.get(name) {
+                Some(p) => {
+                    let prod = if p.production { "  [PROD]" } else { "" };
+                    format!(
+                        "{:<20} {}:{}/{}{prod}",
+                        p.display_name(),
+                        p.host,
+                        p.port,
+                        p.database.as_deref().unwrap_or("")
+                    )
+                }
+                None => name.clone(),
+            },
+        };
+        let style = if selected {
+            Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else {
+            Style::new()
+        };
+        lines.push(Line::styled(format!("{marker}{text}"), style));
+    }
+    if items.is_empty() {
+        let message = if picker.input.trim().is_empty() {
+            "No saved profiles. Type a postgres:// address and press Enter."
+        } else {
+            "No profile matches. Type a full postgres:// address to connect directly."
+        };
+        lines.push(Line::styled(message, dim));
+    }
+    frame.render_widget(Paragraph::new(lines), list);
+
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Picker], |_| true)
+            .map_or(String::new(), |k| k.to_string())
+    };
+    let footer = format!(
+        "{} connect  {} close  {} save address as profile",
+        key(Action::DialogSubmit),
+        key(Action::DialogCancel),
+        key(Action::PickerSaveProfile)
+    );
+    let footer_area = Rect {
+        y: inner.y + inner.height - 1,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(Paragraph::new(Line::styled(footer, dim)), footer_area);
+}
+
+fn draw_password(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let Some(Dialog::Password(prompt)) = &app.state.dialog else {
+        return;
+    };
+    let dim = Style::new().fg(theme.dimmed);
+    let conn = app.state.connection(prompt.conn);
+    let who = conn.map_or(String::new(), |c| {
+        let user = c
+            .profile
+            .user
+            .clone()
+            .unwrap_or_else(crate::runtime::default_user);
+        format!("{user}@{}:{}", c.profile.host, c.profile.port)
+    });
+    let popup = layout::centered(area, 60, 8);
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Password ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.focus));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height < 5 {
+        return;
+    }
+    let row = |n: u16| Rect {
+        y: inner.y + n,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(Paragraph::new(format!("Password for {who}")), row(0));
+    if let Some(error) = &prompt.error {
+        frame.render_widget(
+            Paragraph::new(format!("Rejected: {}", clean_cell(error)))
+                .style(Style::new().fg(theme.error).add_modifier(Modifier::BOLD)),
+            row(1),
+        );
+    }
+    // The typed password is never shown, only how many characters it has.
+    let masked = "•".repeat(prompt.input.expose().chars().count().min(40));
+    let line = format!("> {masked}");
+    frame.render_widget(Paragraph::new(line.clone()), row(2));
+    frame.set_cursor_position((inner.x + line.chars().count() as u16, inner.y + 2));
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Prompt], |_| true)
+            .map_or(String::new(), |k| k.to_string())
+    };
     frame.render_widget(
-        Paragraph::new(text).style(Style::new().fg(theme.status_fg).bg(theme.status_bg)),
-        area,
+        Paragraph::new(Line::styled(
+            format!(
+                "{} connect (empty: no password)  {} cancel",
+                key(Action::DialogSubmit),
+                key(Action::DialogCancel)
+            ),
+            dim,
+        )),
+        row(4),
     );
 }
 

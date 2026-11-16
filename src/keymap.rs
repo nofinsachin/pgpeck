@@ -37,6 +37,27 @@ pub enum Action {
     BufferNext,
     BufferPrev,
     BufferReopen,
+    ConnectionOpen,
+    ConnectionReconnect,
+    QueryRun,
+    QueryCancel,
+    ResultsUp,
+    ResultsDown,
+    ResultsPageUp,
+    ResultsPageDown,
+    ResultsFirstRow,
+    ResultsLastRow,
+    ResultsLeft,
+    ResultsRight,
+    ResultsPrevTab,
+    ResultsNextTab,
+    DialogNext,
+    DialogPrev,
+    DialogSubmit,
+    DialogCancel,
+    DialogBackspace,
+    DialogClear,
+    PickerSaveProfile,
     CompletionTrigger,
     CompletionAccept,
     CompletionDismiss,
@@ -64,6 +85,27 @@ const ACTIONS: &[(&str, Action)] = &[
     ("buffer.next", Action::BufferNext),
     ("buffer.prev", Action::BufferPrev),
     ("buffer.reopen", Action::BufferReopen),
+    ("connection.open", Action::ConnectionOpen),
+    ("connection.reconnect", Action::ConnectionReconnect),
+    ("query.run_statement", Action::QueryRun),
+    ("query.cancel", Action::QueryCancel),
+    ("results.scroll_up", Action::ResultsUp),
+    ("results.scroll_down", Action::ResultsDown),
+    ("results.page_up", Action::ResultsPageUp),
+    ("results.page_down", Action::ResultsPageDown),
+    ("results.first_row", Action::ResultsFirstRow),
+    ("results.last_row", Action::ResultsLastRow),
+    ("results.scroll_left", Action::ResultsLeft),
+    ("results.scroll_right", Action::ResultsRight),
+    ("results.prev_tab", Action::ResultsPrevTab),
+    ("results.next_tab", Action::ResultsNextTab),
+    ("dialog.next", Action::DialogNext),
+    ("dialog.prev", Action::DialogPrev),
+    ("dialog.submit", Action::DialogSubmit),
+    ("dialog.cancel", Action::DialogCancel),
+    ("dialog.backspace", Action::DialogBackspace),
+    ("dialog.clear", Action::DialogClear),
+    ("picker.save_profile", Action::PickerSaveProfile),
     ("completion.trigger", Action::CompletionTrigger),
     ("completion.accept", Action::CompletionAccept),
     ("completion.dismiss", Action::CompletionDismiss),
@@ -221,6 +263,27 @@ impl Action {
             Action::BufferNext => "next buffer",
             Action::BufferPrev => "previous buffer",
             Action::BufferReopen => "reopen closed buffer",
+            Action::ConnectionOpen => "connect",
+            Action::ConnectionReconnect => "reconnect",
+            Action::QueryRun => "run statement",
+            Action::QueryCancel => "cancel query",
+            Action::ResultsUp => "row up",
+            Action::ResultsDown => "row down",
+            Action::ResultsPageUp => "page up",
+            Action::ResultsPageDown => "page down",
+            Action::ResultsFirstRow => "first row",
+            Action::ResultsLastRow => "last row",
+            Action::ResultsLeft => "columns left",
+            Action::ResultsRight => "columns right",
+            Action::ResultsPrevTab => "previous result",
+            Action::ResultsNextTab => "next result",
+            Action::DialogNext => "next item",
+            Action::DialogPrev => "previous item",
+            Action::DialogSubmit => "confirm",
+            Action::DialogCancel => "cancel",
+            Action::DialogBackspace => "delete character",
+            Action::DialogClear => "clear",
+            Action::PickerSaveProfile => "save as profile",
             Action::CompletionTrigger => "show suggestions",
             Action::CompletionAccept => "accept suggestion",
             Action::CompletionDismiss => "dismiss suggestions",
@@ -240,6 +303,10 @@ pub enum Scope {
     Results,
     /// Active only while the suggestion popup is open.
     Completion,
+    /// The connection picker.
+    Picker,
+    /// The password prompt.
+    Prompt,
     Dialog,
 }
 
@@ -251,6 +318,8 @@ impl Scope {
             Scope::Context => "context",
             Scope::Results => "results",
             Scope::Completion => "completion",
+            Scope::Picker => "picker",
+            Scope::Prompt => "prompt",
             Scope::Dialog => "dialog",
         }
     }
@@ -262,6 +331,8 @@ impl Scope {
             Scope::Context,
             Scope::Results,
             Scope::Completion,
+            Scope::Picker,
+            Scope::Prompt,
             Scope::Dialog,
         ]
         .into_iter()
@@ -271,7 +342,10 @@ impl Scope {
     /// R4.4: the editor must always accept printable characters, and global
     /// bindings are active while it has focus.
     fn forbids_printable(self) -> bool {
-        matches!(self, Scope::Global | Scope::Editor | Scope::Completion)
+        matches!(
+            self,
+            Scope::Global | Scope::Editor | Scope::Completion | Scope::Picker | Scope::Prompt
+        )
     }
 }
 
@@ -645,6 +719,8 @@ mod tests {
             Scope::Context,
             Scope::Results,
             Scope::Completion,
+            Scope::Picker,
+            Scope::Prompt,
             Scope::Dialog,
         ];
         for (name, action) in ACTIONS {
