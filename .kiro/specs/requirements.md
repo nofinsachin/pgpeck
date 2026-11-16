@@ -33,8 +33,8 @@ This document covers the first usable release. Requirement IDs from the UX requi
 #### Acceptance Criteria
 
 1. WHEN the user creates a profile THEN the system SHALL store host, port, database, user, SSL mode, an optional label, an optional color, and a production flag.
-2. WHEN the user edits, duplicates, or deletes a profile THEN the system SHALL apply the change and persist it to the user configuration.
-3. WHEN the user opens the connection picker THEN the system SHALL list profiles with fuzzy search and show recently used profiles first.
+2. WHEN the user edits, duplicates, or deletes a profile THEN the system SHALL apply the change and persist it to the user configuration. The details form SHALL have no password field.
+3. WHEN the user opens the connection window THEN the system SHALL list profiles with fuzzy search and show recently used profiles first, followed by an item for entering the details by hand. A typed `postgres://` address SHALL also be accepted. WHERE the connection of the buffer was lost, the window SHALL offer to reconnect first.
 4. WHEN the user opens a profile from the picker THEN the system SHALL connect to that profile and make it the active connection for the focused buffer.
 5. WHEN the user supplies a connection URI THEN the system SHALL connect without saving a profile.
 6. IF a profile is marked as a production connection THEN the system SHALL display its label with a `PROD` marker and a distinct status bar color.
@@ -45,7 +45,8 @@ This document covers the first usable release. Requirement IDs from the UX requi
 
 #### Acceptance Criteria
 
-1. WHEN a connection needs a password THEN the system SHALL read it from the OS keychain, a `.pgpass` file, an environment variable, or an interactive prompt, in that configurable order.
+1. WHEN a connection needs a password THEN the system SHALL ask the user by default. WHERE the user has enabled it in the configuration, the system SHALL first read a `.pgpass` file or an environment variable, in the configured order.
+1a. THE system SHALL NOT store passwords anywhere, including the OS keychain, configuration files, history, and snippets.
 2. WHILE a password is held in memory THEN the system SHALL represent it with a secret type that does not expose its value through `Debug` or `Display`.
 3. THE system SHALL NOT write passwords or tokens to logs, query history, configuration files, crash reports, or the clipboard.
 4. IF a connection error occurs THEN the system SHALL describe the cause and the next step in plain language without including the password.
@@ -78,6 +79,9 @@ This document covers the first usable release. Requirement IDs from the UX requi
 6. WHEN the user presses `Tab` or `Shift+Tab` THEN the system SHALL cycle focus through visible panes, unless the editor has focus and tab-indent is enabled.
 7. THE system SHALL always provide a keyboard route out of the editor that does not depend on `Tab`.
 8. WHEN a pane-scoped single-key shortcut is pressed while a different pane has focus THEN the system SHALL ignore it.
+9. WHEN the application starts THEN the commands pane (the context pane) SHALL have focus, and a single plain key SHALL be enough to connect (`C`), run (`R`), edit (`E`), open a new buffer (`N`), quit (`Q`), and open help (`?`).
+10. WHEN the editor has focus and the user presses `Esc` with no popup open THEN the system SHALL move focus to the commands pane.
+11. THE default key bindings SHALL NOT require function keys. Function keys MAY be offered as optional alternatives that are not advertised in the hint bar.
 
 ### Requirement 5: Configurable keymap
 
@@ -129,8 +133,8 @@ This document covers the first usable release. Requirement IDs from the UX requi
 
 #### Acceptance Criteria
 
-1. WHEN the user presses `Ctrl+Enter` with no selection THEN the system SHALL run the Statement Under Cursor.
-2. WHEN the user presses `Ctrl+Enter` with a selection THEN the system SHALL run the selected text.
+1. WHEN the user presses the run key (default `Ctrl+R`) with no selection THEN the system SHALL run the Statement Under Cursor.
+2. WHEN the user presses the run key with a selection THEN the system SHALL run the selected text.
 3. WHILE a query runs THEN the system SHALL keep the editor fully editable.
 4. WHILE a query runs THEN the status bar and results pane SHALL show elapsed time and a progress indicator.
 5. WHEN the user requests cancellation THEN the system SHALL send a PostgreSQL cancel request and report whether the cancellation succeeded.
@@ -269,7 +273,7 @@ This document covers the first usable release. Requirement IDs from the UX requi
 #### Acceptance Criteria
 
 1. WHEN a statement is executed THEN the system SHALL record its timestamp, connection, duration, row count or error, and originating buffer in history.
-2. WHEN the user presses `Ctrl+R` THEN the system SHALL open a fuzzy-searchable history that can be filtered by connection.
+2. WHEN the user presses the history key THEN the system SHALL open a fuzzy-searchable history that can be filtered by connection. The default key is still to be chosen, because `Ctrl+R` now runs the statement.
 3. WHEN the user selects a history entry THEN the system SHALL insert it at the cursor or into a new buffer, according to configuration.
 4. THE system SHALL NOT record statements that match the secret-exclusion patterns, including `PASSWORD` in `CREATE USER` or `ALTER ROLE`.
 5. WHEN the user adds an exclusion pattern THEN the system SHALL apply it to future history entries.
@@ -308,7 +312,7 @@ This document covers the first usable release. Requirement IDs from the UX requi
 
 #### Acceptance Criteria
 
-1. THE default layout SHALL contain the editor, the context strip, the results pane, and the status bar.
+1. THE default layout SHALL contain, from top to bottom, the context strip, the editor, the results pane, and the status bar.
 2. THE results pane SHALL be showable or hideable, and its height SHALL be adjustable by keybinding.
 3. WHEN the user maximizes a pane THEN the system SHALL fill the screen with it, and restoring SHALL return the previous layout.
 4. WHEN the terminal is resized THEN the system SHALL redraw the layout without corrupting it.

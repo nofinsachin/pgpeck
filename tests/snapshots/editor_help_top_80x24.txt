@@ -1,11 +1,11 @@
-┌ ▶ Editor ────────────────────────────────────────────────────────────────────┐
-│1                                                                             │
-│  ┌───────────────────────────────── Help ─────────────────────────────────┐  │
+┌ Context ─────────────────────────────────────────────────────────────────────┐
+│Welcome to oxpecker. Press C to connect to a database.                        │
+│Pr┌───────────────────────────────── Help ─────────────────────────────────┐  │
 │  │editor keys                                                             │  │
 │  │  Alt+/             show suggestions      completion.trigger            │  │
 └──│  Alt+C             copy                  editor.copy                   │──┘
-┌ C│  Backspace         delete backward       editor.backspace              │──┐
-│No│  Ctrl+A            select all            editor.select_all             │  │
+┌ ▶│  Backspace         delete backward       editor.backspace              │──┐
+│1 │  Ctrl+A            select all            editor.select_all             │  │
 │  │  Ctrl+End          end of text           editor.move_buffer_end        │  │
 │  │  Ctrl+Home         start of text         editor.move_buffer_start      │  │
 │  │  Ctrl+Insert       copy                  editor.copy                   │  │
@@ -19,6 +19,6 @@
 │  │  Ctrl+V            paste                 editor.paste                  │  │
 │  │  Ctrl+X            cut                   editor.cut                    │  │
 │  │  Ctrl+Y            redo                  editor.redo                   │  │
-└──└─────────────────── Up/Down scroll  ? close  (1/54) ────────────────────┘──┘
-F5 run statement  Ctrl+O connect  F1 help  F6 next pane  Ctrl+Q quit
+└──└─────────────────── Up/Down scroll  ? close  (1/53) ────────────────────┘──┘
+Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 1, Col 1

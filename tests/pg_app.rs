@@ -100,7 +100,7 @@ impl Harness {
     }
 
     async fn connect_with_uri(&mut self, url: &str) {
-        self.key(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        self.key(KeyCode::Char('c'), KeyModifiers::NONE);
         self.type_text(url);
         self.enter();
         self.until("the connection", |a| {
@@ -118,7 +118,7 @@ impl Harness {
         self.feed(Event::Paste(sql.to_string()));
         // With the text selected, everything runs, not just one statement.
         self.key(KeyCode::Char('a'), KeyModifiers::CONTROL);
-        self.key(KeyCode::F(5), KeyModifiers::NONE);
+        self.key(KeyCode::Char('r'), KeyModifiers::CONTROL);
         self.until("the results", |a| {
             a.state.running.is_none() && a.state.doc().results.is_some()
         })
@@ -165,7 +165,7 @@ async fn connect_run_and_see_a_grid() {
     let mut h = Harness::new();
     assert!(h
         .screen()
-        .contains("Not connected. Press Ctrl+O to connect."));
+        .contains("Welcome to oxpecker. Press C to connect to a database."));
 
     h.connect_with_uri(&url).await;
     let screen = h.screen();
@@ -203,7 +203,7 @@ async fn the_statement_under_the_cursor_runs_not_the_whole_buffer() {
         "select 'first' as a;\nselect 'second' as b;\nselect 'third' as c".to_string(),
     ));
     h.key(KeyCode::Up, KeyModifiers::NONE);
-    h.key(KeyCode::F(5), KeyModifiers::NONE);
+    h.key(KeyCode::Char('r'), KeyModifiers::CONTROL);
     h.until("the results", |a| a.state.doc().results.is_some())
         .await;
     let screen = h.screen();
@@ -277,7 +277,7 @@ async fn a_long_statement_shows_progress_and_can_be_cancelled() {
     h.key(KeyCode::Char('a'), KeyModifiers::CONTROL);
     h.key(KeyCode::Delete, KeyModifiers::NONE);
     h.feed(Event::Paste("select pg_sleep(30)".to_string()));
-    h.key(KeyCode::F(5), KeyModifiers::NONE);
+    h.key(KeyCode::Char('r'), KeyModifiers::CONTROL);
     assert!(h.app.state.running.is_some());
     let screen = h.screen();
     assert!(
@@ -315,7 +315,7 @@ async fn a_saved_profile_asks_for_the_password_and_remembers_nothing() {
         .profiles
         .add(url_without_password(&url))
         .expect("add");
-    h.key(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
     h.type_text("test");
     h.enter();
     h.until("the password prompt", |a| {
@@ -352,7 +352,7 @@ async fn a_wrong_password_is_rejected_and_asked_for_again() {
         .profiles
         .add(url_without_password(&url))
         .expect("add");
-    h.key(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
     h.type_text("test");
     h.enter();
     h.until("the prompt", |a| {
@@ -392,7 +392,7 @@ async fn an_environment_password_is_used_without_asking() {
     h.app.state.profiles.add(profile).expect("add");
     // The runtime reads the real environment, so set the variable for this process.
     std::env::set_var("OXPECKER_TEST_PW_FOR_PROFILE", password_of(&url));
-    h.key(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
     h.type_text("test");
     h.enter();
     h.until("the connection", |a| {
@@ -448,8 +448,17 @@ async fn a_dropped_connection_is_reported_and_reconnect_works() {
         "the editor text is kept:\n{screen}"
     );
 
+    // The simple way back: Esc to the commands pane, then C, then Enter on "Reconnect".
+    h.key(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(
+        h.screen().contains("Press C to connect again."),
+        "{}",
+        h.screen()
+    );
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
+    assert!(h.screen().contains("▶ Reconnect to"), "{}", h.screen());
     // The password came from the URI and was not kept, so reconnecting asks again.
-    h.key(KeyCode::Char('o'), KeyModifiers::ALT);
+    h.enter();
     h.until("the password prompt", |a| {
         matches!(a.state.dialog, Some(Dialog::Password(_)))
     })
@@ -477,7 +486,7 @@ async fn an_unreachable_server_fails_clearly_and_does_not_hang_the_ui() {
         good.host,
         good.database.as_deref().unwrap_or("d")
     );
-    h.key(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
     h.type_text(&broken);
     h.enter();
     // The UI answers at once, even though the connection is still in progress.
@@ -500,7 +509,7 @@ async fn saving_a_profile_writes_a_private_file_without_the_password() {
     let _ = std::fs::remove_dir_all(&dir);
     let path = dir.join("connections.toml");
     let mut h = Harness::with(vec![Source::Prompt], 10_000, Some(path.clone()));
-    h.key(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
     h.type_text(&url);
     h.key(KeyCode::Char('s'), KeyModifiers::CONTROL);
 
@@ -521,5 +530,103 @@ async fn saving_a_profile_writes_a_private_file_without_the_password() {
     );
     // The picker screen never shows the password either.
     assert!(!h.screen().contains(&password_of(&url)), "{}", h.screen());
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+#[tokio::test]
+async fn connect_by_typing_the_details() {
+    let url = database!();
+    let good = parse_uri(&url).expect("parse");
+    let profile = good.profile;
+    let mut h = Harness::with(vec![Source::Prompt], 10_000, None);
+
+    // Landing screen: one key opens the window, Enter picks "New connection".
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
+    h.enter();
+    assert!(
+        h.screen().contains("Passwords are never saved"),
+        "{}",
+        h.screen()
+    );
+
+    let clear = |h: &mut Harness| h.key(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    let tab = |h: &mut Harness| h.key(KeyCode::Tab, KeyModifiers::NONE);
+    clear(&mut h);
+    h.type_text(&profile.host);
+    tab(&mut h);
+    clear(&mut h);
+    h.type_text(&profile.port.to_string());
+    tab(&mut h);
+    h.type_text(profile.database.as_deref().expect("database"));
+    tab(&mut h);
+    clear(&mut h);
+    h.type_text(profile.user.as_deref().expect("user"));
+    h.enter();
+
+    h.until("the password prompt", |a| {
+        matches!(a.state.dialog, Some(Dialog::Password(_)))
+    })
+    .await;
+    h.type_text(&password_of(&url));
+    h.enter();
+    h.until("the connection", |a| {
+        a.state
+            .active_connection()
+            .is_some_and(|c| c.status == ConnStatus::Connected)
+    })
+    .await;
+    // Straight to the editor, ready to type.
+    assert_eq!(h.app.state.focus, oxpecker::app::Pane::Editor);
+    h.run("select 'typed by hand' as how").await;
+    assert!(h.screen().contains("typed by hand"));
+    assert!(
+        h.app.state.profiles.is_empty(),
+        "nothing was saved without a name"
+    );
+}
+
+#[tokio::test]
+async fn a_connection_made_in_the_form_can_be_saved_and_is_listed_next_time() {
+    let url = database!();
+    let profile = parse_uri(&url).expect("parse").profile;
+    let dir = std::env::temp_dir().join(format!("oxpecker-e2e-form-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("connections.toml");
+    let mut h = Harness::with(vec![Source::Prompt], 10_000, Some(path.clone()));
+
+    h.key(KeyCode::Char('c'), KeyModifiers::NONE);
+    h.enter();
+    h.key(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    h.type_text(&profile.host);
+    for _ in 0..4 {
+        h.key(KeyCode::Tab, KeyModifiers::NONE);
+    }
+    h.type_text("Test DB");
+    h.enter();
+    h.until("the prompt", |a| {
+        matches!(a.state.dialog, Some(Dialog::Password(_)))
+    })
+    .await;
+    h.key(KeyCode::Esc, KeyModifiers::NONE);
+
+    for _ in 0..100 {
+        if path.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let text = std::fs::read_to_string(&path).expect("the profile file");
+    assert!(
+        text.contains("Test DB") && text.contains(&profile.host),
+        "{text}"
+    );
+
+    // A new session sees it in the list.
+    let (loaded, problems) = oxpecker::profile::Profiles::parse(&text);
+    assert!(problems.is_empty(), "{problems:?}");
+    let mut next = Harness::with(vec![Source::Prompt], 10_000, None);
+    next.app.state.profiles = loaded;
+    next.key(KeyCode::Char('c'), KeyModifiers::NONE);
+    assert!(next.screen().contains("▶ Test DB"), "{}", next.screen());
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }

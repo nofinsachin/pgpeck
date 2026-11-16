@@ -1,3 +1,6 @@
+┌ Context ───────────────────────────────────────────────────────────┐
+│Welcome to oxpecker. Press C to connect to a database.              │
+└────────────────────────────────────────────────────────────────────┘
 ┌ ▶ Editor ──────────────────────────────────────────────────────────┐
 │1                                                                   │
 │                                                                    │
@@ -6,15 +9,12 @@
 │                                                                    │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
-┌ Context ───────────────────────────────────────────────────────────┐
-│Not connected. Press Ctrl+O to connect.                             │
-└────────────────────────────────────────────────────────────────────┘
 ┌ Results ───────────────────────────────────────────────────────────┐
-│No results yet. Run a statement with F5.                            │
+│No results yet. Run a statement with Ctrl+R.                        │
 │                                                                    │
 │                                                                    │
 │                                                                    │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
-F5 run statement  Ctrl+O connect  F1 help  F6 next pane  Ctrl+Q quit
+Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 1, Col 1

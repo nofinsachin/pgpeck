@@ -25,13 +25,33 @@ cargo run
 
 Then in oxpecker:
 
-1. `Ctrl+O`, type `postgres://demo:demo@127.0.0.1:54329/demo`, `Enter`.
-2. Type `select now(), null as nothing;` and press `F5` (also `Ctrl+Enter` or `Alt+Enter`).
-3. `Alt+3` moves to the results, `Alt+2` back to the editor. `Ctrl+C` cancels a running statement.
-4. In the picker, `Ctrl+S` saves the typed address as a profile, without its password.
-   Saved profiles live in `~/.config/oxpecker/connections.toml` and are listed next time.
-   Without a password in the address, oxpecker looks in the keychain, `~/.pgpass`
-   and `$PGPASSWORD`, and asks if none has one.
+1. Press `C`. Choose **New connection**, type the details (host `127.0.0.1`, port `54329`,
+   database `demo`, user `demo`) and press `Enter`. Or paste
+   `postgres://demo@127.0.0.1:54329/demo` in the box instead.
+2. Type the password when asked (`demo`). Oxpecker never stores passwords. It asks every time.
+3. You land in the editor. Type `select now(), null as nothing;` and press `Ctrl+R`.
+
+The keys, all shown on screen:
+
+| Where | Key | Does |
+|---|---|---|
+| Commands pane (top, where you start) | `C` | connect |
+| | `R` | run the statement under the cursor |
+| | `E` or `Enter` | go to the editor |
+| | `N` | new buffer |
+| | `Q` | quit |
+| | `?` | help |
+| Editor | `Ctrl+R` | run the statement under the cursor, or the selection |
+| | `Esc` | back to the commands pane |
+| | `Ctrl+C` | cancel a running statement |
+| Results | `C` `R` `E` `Q` | as above, plus arrows, `[` and `]` to move |
+| Connect window | type | search profiles, or paste a `postgres://` address |
+| | `Ctrl+S` | save the typed address as a profile (no password) |
+
+Naming a connection in the details form saves it as a profile in
+`~/.config/oxpecker/connections.toml`, without a password. It is listed next time.
+To let oxpecker read a password you already keep in `~/.pgpass` or `$PGPASSWORD`,
+see `password_sources` in `config/default.toml`.
 
 `F1` lists every key. Remove the container with `docker rm -f oxpecker-pg`.
 

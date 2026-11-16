@@ -1,0 +1,24 @@
+┌ ▶ Context ─────────────────────────────────────────────────────────────────────────────┐
+│Welcome to oxpecker. Press C to connect to a database.                                  │
+│                                                                                        │
+│C connect   R run   E edit SQL   N new buffer   Q quit   ? help                         │
+│                                                                                        │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Editor ────────────────────────────────────────────────────────────────────────────────┐
+│1       ┌────────────────────────────── Connect ───────────────────────────────┐        │
+│        │> type to search, or paste a postgres:// address                      │        │
+│        │▶ billing              billing.example.com:5432/ledger  [PROD]        │        │
+│        │  local dev            localhost:5432/dev                             │        │
+│        │  New connection: enter the details                                   │        │
+└────────│                                                                      │────────┘
+┌ Results│                                                                      │────────┐
+│No resul│Enter connect  Esc close  Ctrl+S save address as profile              │        │
+│        └──────────────────────────────────────────────────────────────────────┘        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+C connect  R run  E edit  N new buffer  Q quit  ? help
+ no connection │ focus: Context │ Ln 1, Col 1

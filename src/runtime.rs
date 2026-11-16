@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -11,13 +11,12 @@ use crate::command::Command;
 use crate::db::{self, ConnId, Session};
 use crate::events::{Background, Event};
 use crate::profile::{write_private, Profile};
-use crate::secrets::{self, Environment, Keychain, OsKeychain, Outcome, Source};
+use crate::secrets::{self, Environment, Outcome, Source};
 
 #[derive(Clone)]
 pub struct Runtime {
     events: UnboundedSender<Event>,
     sessions: Arc<Mutex<HashMap<ConnId, Session>>>,
-    keychain_ready: Arc<OnceLock<Result<(), String>>>,
     password_sources: Arc<Vec<Source>>,
     row_limit: usize,
     profiles_path: Option<PathBuf>,
@@ -45,7 +44,6 @@ impl Runtime {
         Self {
             events,
             sessions: Arc::default(),
-            keychain_ready: Arc::default(),
             password_sources: Arc::new(password_sources),
             row_limit,
             profiles_path,
@@ -161,38 +159,23 @@ impl Runtime {
         }
     }
 
-    /// Searches the configured sources. The keychain can block, so lookups run
-    /// on a blocking thread, and the keychain is set up on first use only.
+    /// Searches the configured sources. Reading a file can block, so lookups
+    /// run on a blocking thread.
     async fn find_password(&self, profile: &Profile) -> Lookup {
         let order = self.password_sources.clone();
-        let ready = self.keychain_ready.clone();
         let target = profile.target(&default_user());
         let result = tokio::task::spawn_blocking(move || {
-            let mut notes = Vec::new();
-            let keychain: Option<&dyn Keychain> = if order.contains(&Source::Keychain) {
-                match ready.get_or_init(secrets::init_os_keychain) {
-                    Ok(()) => Some(&OsKeychain),
-                    Err(e) => {
-                        notes.push(format!("The OS keychain is not available: {e}"));
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            let environment = Environment {
-                keychain,
-                env: &env_var,
-            };
-            let mut resolution = secrets::resolve(&order, &target, &environment);
-            notes.append(&mut resolution.notes);
-            (resolution.outcome, notes)
+            let environment = Environment { env: &env_var };
+            secrets::resolve(&order, &target, &environment)
         })
         .await;
         match result {
-            Ok((Outcome::Found(secret, _), _)) => Lookup::Found(secret),
-            Ok((Outcome::NeedsPrompt, notes)) => Lookup::Ask(notes),
-            Ok((Outcome::NotFound, _)) | Err(_) => Lookup::None,
+            Ok(resolution) => match resolution.outcome {
+                Outcome::Found(secret, _) => Lookup::Found(secret),
+                Outcome::NeedsPrompt => Lookup::Ask(resolution.notes),
+                Outcome::NotFound => Lookup::None,
+            },
+            Err(_) => Lookup::None,
         }
     }
 }

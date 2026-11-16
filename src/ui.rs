@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
 use crate::db::{DbError, ResultSet};
 use crate::editor::{cell_width, display_col, Pos};
-use crate::keymap::{Action, Scope};
+use crate::keymap::{Action, KeyChord, Scope};
 use crate::layout;
 use crate::picker::{self, Item};
 use crate::results::Tab;
@@ -52,6 +52,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     match &app.state.dialog {
         Some(Dialog::Picker(picker)) => draw_picker(frame, app, theme, picker, area),
+        Some(Dialog::Form(form)) => draw_form(frame, app, theme, form, area),
         Some(Dialog::Password(_)) => draw_password(frame, app, theme, area),
         None => {}
     }
@@ -83,10 +84,35 @@ fn pane_block<'a>(app: &App, theme: &Theme, pane: Pane) -> Block<'a> {
         .title_style(style)
 }
 
+/// How a key is shown. A plain letter is shown as a capital, so `C connect`
+/// reads as a key and not as a word.
+fn key_label(key: KeyChord) -> String {
+    let text = key.to_string();
+    if text.len() == 1 && text.chars().all(|c| c.is_ascii_lowercase()) {
+        text.to_uppercase()
+    } else {
+        text
+    }
+}
+
 /// Keys shown in messages come from the keymap, never from the code.
 fn key_text(app: &App, action: Action) -> String {
     app.hint_key(action)
-        .map_or_else(|| "(unbound)".to_string(), |k| k.to_string())
+        .map_or_else(|| "(unbound)".to_string(), key_label)
+}
+
+/// A key for `action` that works whichever pane has focus.
+fn global_key(app: &App, action: Action) -> String {
+    app.keymap
+        .key_for(action, &[Scope::Global], |_| true)
+        .map_or_else(|| "(unbound)".to_string(), key_label)
+}
+
+/// The key for `action` in the commands pane, wherever focus is now.
+fn command_key(app: &App, action: Action) -> String {
+    app.keymap
+        .key_for(action, &[Scope::Context, Scope::Global], |_| true)
+        .map_or_else(|| "(unbound)".to_string(), key_label)
 }
 
 // ---------------------------------------------------------------------------
@@ -95,15 +121,58 @@ fn key_text(app: &App, action: Action) -> String {
 
 fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
+    let bold = Style::new().add_modifier(Modifier::BOLD);
+    // The single keys below only work while this pane has focus.
+    let has_focus = app.state.focus == Pane::Context;
+    let keys = |actions: &[(Action, &str)]| {
+        let text: Vec<String> = actions
+            .iter()
+            .map(|(action, what)| format!("{} {what}", command_key(app, *action)))
+            .collect();
+        Line::styled(text.join("   "), dim)
+    };
     let lines: Vec<Line> = match app.state.active_connection() {
-        None => vec![Line::styled(
-            format!(
-                "Not connected. Press {} to connect.",
-                key_text(app, Action::ConnectionOpen)
-            ),
-            dim,
-        )],
-        Some(conn) => connection_lines(app, theme, conn),
+        None => {
+            let mut lines = vec![Line::from(vec![
+                Span::styled("Welcome to oxpecker. ", bold),
+                Span::raw(format!(
+                    "Press {} to connect to a database.",
+                    command_key(app, Action::ConnectionOpen)
+                )),
+            ])];
+            if has_focus {
+                lines.push(Line::raw(""));
+                lines.push(keys(&[
+                    (Action::ConnectionOpen, "connect"),
+                    (Action::QueryRun, "run"),
+                    (Action::FocusEditor, "edit SQL"),
+                    (Action::BufferNew, "new buffer"),
+                    (Action::AppQuit, "quit"),
+                    (Action::HelpToggle, "help"),
+                ]));
+            } else {
+                lines.push(Line::styled(
+                    format!(
+                        "Press {} to get back to these commands.",
+                        key_text(app, Action::FocusCommands)
+                    ),
+                    dim,
+                ));
+            }
+            lines
+        }
+        Some(conn) => {
+            let mut lines = connection_lines(app, theme, conn);
+            if has_focus && conn.status == ConnStatus::Connected {
+                lines.push(keys(&[
+                    (Action::QueryRun, "run"),
+                    (Action::FocusEditor, "edit SQL"),
+                    (Action::ConnectionOpen, "other connection"),
+                    (Action::AppQuit, "quit"),
+                ]));
+            }
+            lines
+        }
     };
     let body = Paragraph::new(lines).block(pane_block(app, theme, Pane::Context));
     frame.render_widget(body, area);
@@ -144,8 +213,8 @@ fn connection_lines<'a>(app: &App, theme: &Theme, conn: &'a Connection) -> Vec<L
             lines.push(Line::styled(message.clone(), Style::new().fg(theme.error)));
             lines.push(Line::styled(
                 format!(
-                    "Press {} to reconnect.",
-                    key_text(app, Action::ConnectionReconnect)
+                    "Press {} to connect again.",
+                    command_key(app, Action::ConnectionOpen)
                 ),
                 dim,
             ));
@@ -263,7 +332,7 @@ fn draw_results(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
         Line::styled(
             format!(
                 "No results yet. Run a statement with {}.",
-                key_text(app, Action::QueryRun)
+                global_key(app, Action::QueryRun)
             ),
             dim,
         )
@@ -677,7 +746,7 @@ fn draw_hint_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         let Some(key) = app.hint_key(*action) else {
             continue;
         };
-        let key = key.to_string();
+        let key = key_label(key);
         let label = format!(" {}", action.description());
         let separator = if spans.is_empty() { 0 } else { 2 };
         let needed = separator + key.chars().count() + label.chars().count();
@@ -820,7 +889,12 @@ fn redact_uri(text: &str) -> String {
 
 fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Picker, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
-    let items = picker.items(&app.state.profiles);
+    let reconnect = app.state.doc().connection.and_then(|id| {
+        let c = app.state.connection(id)?;
+        matches!(c.status, ConnStatus::Failed(_) | ConnStatus::Closed(_))
+            .then(|| c.label().to_string())
+    });
+    let items = picker.items(&app.state.profiles, reconnect.as_deref());
     let visible = items.len().clamp(1, 8);
     let popup = layout::centered(area, 72, visible as u16 + 6);
     frame.render_widget(Clear, popup);
@@ -836,7 +910,18 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
 
     let shown = redact_uri(&picker.input);
     let prompt = format!("> {shown}");
-    frame.render_widget(Paragraph::new(prompt.clone()), Rect { height: 1, ..inner });
+    let input_row = Rect { height: 1, ..inner };
+    if picker.input.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("> "),
+                Span::styled("type to search, or paste a postgres:// address", dim),
+            ])),
+            input_row,
+        );
+    } else {
+        frame.render_widget(Paragraph::new(prompt.clone()), input_row);
+    }
     let cursor_x = inner.x
         + prompt
             .chars()
@@ -862,6 +947,8 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
         let marker = if selected { "▶ " } else { "  " };
         let text = match item {
             Item::Uri(_) => "Connect to this address".to_string(),
+            Item::Reconnect(label) => format!("Reconnect to {label}"),
+            Item::New => "New connection: enter the details".to_string(),
             Item::Profile(name) => match app.state.profiles.get(name) {
                 Some(p) => {
                     let prod = if p.production { "  [PROD]" } else { "" };
@@ -884,12 +971,7 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
         lines.push(Line::styled(format!("{marker}{text}"), style));
     }
     if items.is_empty() {
-        let message = if picker.input.trim().is_empty() {
-            "No saved profiles. Type a postgres:// address and press Enter."
-        } else {
-            "No profile matches. Type a full postgres:// address to connect directly."
-        };
-        lines.push(Line::styled(message, dim));
+        lines.push(Line::styled("Nothing to show.", dim));
     }
     frame.render_widget(Paragraph::new(lines), list);
 
@@ -910,6 +992,121 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
         ..inner
     };
     frame.render_widget(Paragraph::new(Line::styled(footer, dim)), footer_area);
+}
+
+fn draw_form(
+    frame: &mut Frame,
+    app: &App,
+    theme: &Theme,
+    form: &crate::form::ConnectForm,
+    area: Rect,
+) {
+    let dim = Style::new().fg(theme.dimmed);
+    let popup = layout::centered(area, 70, 14);
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" New connection ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.focus));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height < 10 {
+        return;
+    }
+    let row = |n: u16| Rect {
+        y: inner.y + n,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            "Passwords are never saved. You are asked for it next.",
+            dim,
+        )),
+        row(0),
+    );
+
+    let hints = [
+        "",
+        "",
+        "(empty: same as the user)",
+        "",
+        "(empty: do not save this connection)",
+        "(Space to switch)",
+    ];
+    let label_width = crate::form::LABELS
+        .iter()
+        .map(|l| l.len())
+        .max()
+        .unwrap_or(0);
+    for (index, label) in crate::form::LABELS.iter().enumerate() {
+        let focused = form.focus == index;
+        let marker = if focused { "▶ " } else { "  " };
+        let mut spans = vec![Span::styled(
+            format!("{marker}{label:<label_width$}  "),
+            if focused {
+                Style::new().add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            },
+        )];
+        match form.text(index) {
+            Some("") => spans.push(Span::styled(hints[index], dim)),
+            Some(text) => spans.push(Span::styled(
+                text.to_string(),
+                if focused {
+                    Style::new().add_modifier(Modifier::UNDERLINED)
+                } else {
+                    Style::new()
+                },
+            )),
+            None => {
+                let mark = if form.production {
+                    "[x] yes, mark as production"
+                } else {
+                    "[ ] no"
+                };
+                spans.push(Span::raw(mark));
+                spans.push(Span::styled(format!("  {}", hints[index]), dim));
+            }
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), row(2 + index as u16));
+    }
+
+    // The cursor sits at the end of the text being edited.
+    if let Some(text) = form.text(form.focus) {
+        let x =
+            inner.x + (2 + label_width + 2 + text.chars().map(cell_width).sum::<usize>()) as u16;
+        frame.set_cursor_position((
+            x.min(inner.right().saturating_sub(1)),
+            inner.y + 2 + form.focus as u16,
+        ));
+    }
+
+    if let Some(error) = &form.error {
+        frame.render_widget(
+            Paragraph::new(error.clone())
+                .style(Style::new().fg(theme.error).add_modifier(Modifier::BOLD)),
+            row(9),
+        );
+    }
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Form], |_| true)
+            .map_or(String::new(), key_label)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            format!(
+                "{} next field  {} connect  {} back",
+                key(Action::DialogNext),
+                key(Action::DialogSubmit),
+                key(Action::DialogCancel)
+            ),
+            dim,
+        )),
+        row(inner.height - 1),
+    );
 }
 
 fn draw_password(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -1073,9 +1270,17 @@ mod tests {
         assert_eq!(actual, expected, "snapshot {name} differs");
     }
 
-    fn app(width: u16, height: u16) -> App {
+    /// An app as it is at startup, on the commands pane.
+    fn landing(width: u16, height: u16) -> App {
         let mut app = App::new(Config::default(), Keymap::default_keymap());
         app.update(Event::Resize(width, height));
+        app
+    }
+
+    /// An app focused on the editor, so tests can type at once.
+    fn app(width: u16, height: u16) -> App {
+        let mut app = landing(width, height);
+        app.state.focus = Pane::Editor;
         app
     }
 
@@ -1094,11 +1299,144 @@ mod tests {
         }
     }
 
+    /// Screen row of the editor's top border. The context pane above it is 6 rows.
+    const EDITOR_TOP: u16 = 6;
+
+    /// The style at a position inside the editor text (row 0 is its first line).
+    fn editor_style(app: &App, width: u16, height: u16, x: u16, row: u16) -> Style {
+        cell_style(app, width, height, x, EDITOR_TOP + 1 + row)
+    }
+
     const SAMPLE: &str =
         "-- users per day\nselect id, name\n  from users\n where name = 'a;b' and n > 10;";
 
     #[test]
-    fn default_screen_80x24() {
+    fn the_screen_at_startup_invites_you_to_connect() {
+        let out = render(&landing(80, 24), 80, 24);
+        for expected in [
+            "Welcome to oxpecker. Press C to connect to a database.",
+            "C connect   R run   E edit SQL   N new buffer   Q quit   ? help",
+            "┌ ▶ Context",
+            "No results yet. Run a statement with Ctrl+R.",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        // The panes run top to bottom: where you are, what you write, the results.
+        let at = |title: &str| out.find(title).unwrap_or_else(|| panic!("no {title}"));
+        assert!(
+            at("Context") < at("Editor") && at("Editor") < at("Results"),
+            "{out}"
+        );
+        assert_snapshot("landing_80x24", &out);
+    }
+
+    fn with_profiles(mut a: App) -> App {
+        for (name, host, db, prod) in [
+            ("billing", "billing.example.com", "ledger", true),
+            ("local dev", "localhost", "dev", false),
+        ] {
+            let mut p = crate::profile::Profile::new(name);
+            p.host = host.to_string();
+            p.database = Some(db.to_string());
+            p.production = prod;
+            a.state.profiles.add(p).expect("add");
+        }
+        a
+    }
+
+    #[test]
+    fn the_connect_window_lists_profiles_then_new_connection() {
+        let mut a = with_profiles(landing(90, 24));
+        key(&mut a, KeyCode::Char('c'), KeyModifiers::NONE);
+        let out = render(&a, 90, 24);
+        for expected in [
+            "type to search, or paste a postgres:// address",
+            "▶ billing",
+            "[PROD]",
+            "local dev",
+            "New connection: enter the details",
+            "Enter connect  Esc close",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert_snapshot("connect_window_90x24", &out);
+    }
+
+    #[test]
+    fn typing_in_the_connect_window_narrows_the_list() {
+        let mut a = with_profiles(landing(90, 24));
+        key(&mut a, KeyCode::Char('c'), KeyModifiers::NONE);
+        type_text(&mut a, "loc");
+        let out = render(&a, 90, 24);
+        assert!(
+            out.contains("▶ local dev") && !out.contains("billing"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn the_details_form() {
+        let mut a = landing(90, 26);
+        // The suggested user is the OS login, so fix it to keep the snapshot portable.
+        a.state.dialog = Some(Dialog::Form(crate::form::ConnectForm::new("alice")));
+        let out = render(&a, 90, 26);
+        for expected in [
+            "New connection",
+            "Passwords are never saved",
+            "▶ Host",
+            "localhost",
+            "5432",
+            "(empty: same as the user)",
+            "(empty: do not save this connection)",
+            "[ ] no",
+            "Tab next field  Enter connect  Esc back",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert_snapshot("connect_form_90x26", &out);
+    }
+
+    #[test]
+    fn a_form_error_is_shown_in_the_form() {
+        let mut a = landing(90, 26);
+        key(&mut a, KeyCode::Char('c'), KeyModifiers::NONE);
+        key(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        key(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        key(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        key(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(render(&a, 90, 26).contains("The port must be a number from 1 to 65535"));
+    }
+
+    #[test]
+    fn the_password_prompt_masks_what_is_typed() {
+        let mut a = landing(90, 24);
+        key(&mut a, KeyCode::Char('c'), KeyModifiers::NONE);
+        type_text(&mut a, "postgres://alice@127.0.0.1:5432/app");
+        let commands = a.update(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        let crate::command::Command::Connect { conn, .. } = commands[0].clone() else {
+            panic!("connect")
+        };
+        a.update(Event::Background(
+            crate::events::Background::PasswordNeeded {
+                conn,
+                notes: Vec::new(),
+            },
+        ));
+        type_text(&mut a, "hunter22");
+        let out = render(&a, 90, 24);
+        assert!(out.contains("Password for alice@127.0.0.1:5432"), "{out}");
+        assert!(
+            out.contains("> ••••••••") && !out.contains("hunter22"),
+            "{out}"
+        );
+        assert_snapshot("password_prompt_90x24", &out);
+    }
+
+    #[test]
+    fn the_editor_screen_80x24() {
         assert_snapshot("default_80x24", &render(&app(80, 24), 80, 24));
     }
 
@@ -1181,9 +1519,9 @@ mod tests {
         type_text(&mut a, "de");
         // The cursor is on row 1. Row 2 is the popup border, row 3 the first
         // item, which is selected, and row 4 the second.
-        let selected = cell_style(&a, 80, 24, 5, 3);
+        let selected = cell_style(&a, 80, 24, 5, EDITOR_TOP + 3);
         assert!(selected.add_modifier.contains(Modifier::REVERSED));
-        let other = cell_style(&a, 80, 24, 5, 4);
+        let other = cell_style(&a, 80, 24, 5, EDITOR_TOP + 4);
         assert!(!other.add_modifier.contains(Modifier::REVERSED));
     }
 
@@ -1199,7 +1537,7 @@ mod tests {
         let out = render(&a, 40, 10);
         assert!(out.contains("Terminal too small"));
         assert!(out.contains("Results"));
-        assert!(!out.contains("Editor"));
+        assert!(!out.contains("Editor") && !out.contains("Context"));
         assert_snapshot("too_small_40x10", &out);
     }
 
@@ -1214,12 +1552,15 @@ mod tests {
     #[test]
     fn editor_title_names_the_buffer_only_when_there_are_several() {
         let mut a = app(80, 24);
-        assert!(render(&a, 80, 24).starts_with("┌ ▶ Editor ─"));
+        assert!(render(&a, 80, 24).contains("┌ ▶ Editor ─"));
         key(&mut a, KeyCode::Char('n'), KeyModifiers::CONTROL);
         type_text(&mut a, "x");
         let out = render(&a, 80, 24);
-        assert!(out.starts_with("┌ ▶ Editor: Buffer 2 (2/2) ─"), "{out}");
-        assert!(out.lines().nth(1).is_some_and(|l| l.starts_with("│1 x")));
+        assert!(out.contains("┌ ▶ Editor: Buffer 2 (2/2) ─"), "{out}");
+        assert!(
+            out.lines().nth(7).is_some_and(|l| l.starts_with("│1 x")),
+            "{out}"
+        );
     }
 
     #[test]
@@ -1236,7 +1577,20 @@ mod tests {
         let out = render(&app(80, 24), 80, 24);
         let hint = out.lines().rev().nth(1).expect("hint line");
         assert!(!hint.contains("Tab"), "{hint}");
-        assert!(hint.contains("F6 next pane"), "{hint}");
+        // The editor hint is short: how to run and how to leave.
+        assert!(
+            hint.contains("Ctrl+R run") && hint.contains("Esc commands"),
+            "{hint}"
+        );
+        // No function keys on the default screen.
+        assert!(
+            !hint.contains('F')
+                || !hint
+                    .chars()
+                    .zip(hint.chars().skip(1))
+                    .any(|(a, b)| a == 'F' && b.is_ascii_digit()),
+            "{hint}"
+        );
     }
 
     #[test]
@@ -1264,17 +1618,20 @@ mod tests {
         let mut a = app(80, 24);
         type_text(&mut a, SAMPLE);
         // Line 1 is a comment.
-        let comment = cell_style(&a, 80, 24, 3, 1);
+        let comment = editor_style(&a, 80, 24, 3, 0);
         assert_eq!(comment.fg, Some(theme.dimmed));
         assert!(comment.add_modifier.contains(Modifier::ITALIC));
         // Line 2: `select` is a keyword, `id` is not.
-        let keyword = cell_style(&a, 80, 24, 3, 2);
+        let keyword = editor_style(&a, 80, 24, 3, 1);
         assert_eq!(keyword.fg, Some(theme.keyword));
         assert!(keyword.add_modifier.contains(Modifier::BOLD));
-        assert_ne!(cell_style(&a, 80, 24, 10, 2).fg, Some(theme.keyword));
+        assert_ne!(editor_style(&a, 80, 24, 10, 1).fg, Some(theme.keyword));
         // Line 4: the string, including its semicolon, is one string token.
         let string_col = 3 + " where name = ".len() as u16 + 4;
-        assert_eq!(cell_style(&a, 80, 24, string_col, 4).fg, Some(theme.string));
+        assert_eq!(
+            editor_style(&a, 80, 24, string_col, 3).fg,
+            Some(theme.string)
+        );
     }
 
     #[test]
@@ -1282,10 +1639,10 @@ mod tests {
         let mut a = app(80, 24);
         type_text(&mut a, "abc");
         key(&mut a, KeyCode::Left, KeyModifiers::SHIFT);
-        assert!(cell_style(&a, 80, 24, 5, 1)
+        assert!(editor_style(&a, 80, 24, 5, 0)
             .add_modifier
             .contains(Modifier::REVERSED));
-        assert!(!cell_style(&a, 80, 24, 4, 1)
+        assert!(!editor_style(&a, 80, 24, 4, 0)
             .add_modifier
             .contains(Modifier::REVERSED));
     }
@@ -1295,12 +1652,12 @@ mod tests {
         let mut a = app(80, 24);
         type_text(&mut a, "f(1)");
         key(&mut a, KeyCode::Left, KeyModifiers::NONE); // cursor between `1` and `)`
-        let open = cell_style(&a, 80, 24, 4, 1);
-        let close = cell_style(&a, 80, 24, 6, 1);
+        let open = editor_style(&a, 80, 24, 4, 0);
+        let close = editor_style(&a, 80, 24, 6, 0);
         for style in [open, close] {
             assert!(style.add_modifier.contains(Modifier::UNDERLINED));
         }
-        assert!(!cell_style(&a, 80, 24, 5, 1)
+        assert!(!editor_style(&a, 80, 24, 5, 0)
             .add_modifier
             .contains(Modifier::UNDERLINED));
     }
@@ -1312,7 +1669,7 @@ mod tests {
         let mut t = terminal(80, 24);
         t.draw(|f| draw(f, &a, &Theme::default())).expect("draw");
         let pos = t.get_cursor_position().expect("cursor");
-        assert_eq!((pos.x, pos.y), (3 + 3, 2));
+        assert_eq!((pos.x, pos.y), (3 + 3, EDITOR_TOP + 2));
     }
 
     #[test]
@@ -1331,7 +1688,7 @@ mod tests {
         let mut a = app(80, 24);
         type_text(&mut a, &format!("{}END", "x".repeat(150)));
         let out = render(&a, 80, 24);
-        let row = out.lines().nth(1).expect("first row");
+        let row = out.lines().nth(7).expect("first editor row");
         assert!(row.contains("END"), "{row}");
         assert!(row.starts_with("│1 "), "{row}");
         assert!(!row.contains(&"x".repeat(100)));
@@ -1355,7 +1712,7 @@ mod tests {
         }
         let out = render(&a, 80, 24);
         assert!(out.contains("41"), "last line number is visible");
-        assert!(!out.lines().nth(1).is_some_and(|l| l.starts_with("│ 1 ")));
+        assert!(!out.lines().nth(7).is_some_and(|l| l.starts_with("│ 1 ")));
     }
 
     // Keep the `Color` import used even if themes change.

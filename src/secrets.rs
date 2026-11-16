@@ -1,9 +1,11 @@
 //! Passwords. This is the only module that reads them (R2).
 //!
-//! A password is held as a `Secret`, which cannot be printed. The lookup order
-//! is configurable: OS keychain, `.pgpass`, an environment variable, or an
-//! interactive prompt. The prompt itself is a UI concern, so lookup only
+//! Oxpecker never stores a password. By default it asks every time. Users can
+//! opt in to reading one that they already keep elsewhere: a `.pgpass` file or
+//! an environment variable. The prompt itself is a UI concern, so lookup only
 //! reports that one is needed.
+//!
+//! A password is held as a `Secret`, which cannot be printed.
 //!
 //! Limitation: `Secret` does not overwrite its memory when dropped. Doing that
 //! reliably needs `unsafe` or a new dependency, and the password is also held
@@ -23,7 +25,7 @@ impl Secret {
     }
 
     /// The raw value. Call this only where the password is handed to the
-    /// database driver or the keychain.
+    /// database driver.
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -42,23 +44,16 @@ impl fmt::Debug for Secret {
 /// Where a password can come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Source {
-    Keychain,
     Pgpass,
     Env,
     Prompt,
 }
 
 impl Source {
-    pub const ALL: [Source; 4] = [
-        Source::Keychain,
-        Source::Pgpass,
-        Source::Env,
-        Source::Prompt,
-    ];
+    pub const ALL: [Source; 3] = [Source::Pgpass, Source::Env, Source::Prompt];
 
     pub fn name(self) -> &'static str {
         match self {
-            Source::Keychain => "keychain",
             Source::Pgpass => "pgpass",
             Source::Env => "env",
             Source::Prompt => "prompt",
@@ -69,79 +64,10 @@ impl Source {
         Self::ALL.into_iter().find(|s| s.name() == name)
     }
 
-    /// The default order: stored secrets first, asking last.
+    /// The default: always ask. Nothing is read from anywhere else unless the
+    /// user lists it in the configuration.
     pub fn default_order() -> Vec<Source> {
-        Self::ALL.to_vec()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Keychain
-// ---------------------------------------------------------------------------
-
-/// Service name under which passwords are stored in the OS keychain.
-pub const KEYCHAIN_SERVICE: &str = "oxpecker";
-
-/// Storage for remembered passwords. Calls can block (the OS may ask the user
-/// to unlock the keychain), so callers run them off the UI task.
-pub trait Keychain: Send + Sync {
-    fn get(&self, account: &str) -> Result<Option<Secret>, String>;
-    fn set(&self, account: &str, secret: &Secret) -> Result<(), String>;
-    fn delete(&self, account: &str) -> Result<(), String>;
-}
-
-/// The OS keychain: Secret Service on Linux, Keychain on macOS.
-pub struct OsKeychain;
-
-/// Selects the platform credential store. Call once at startup. When it fails
-/// (for example no Secret Service on a headless box), the keychain source is
-/// reported as unavailable and the other sources still work.
-pub fn init_os_keychain() -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        let store = zbus_secret_service_keyring_store::Store::new().map_err(|e| e.to_string())?;
-        keyring_core::set_default_store(store);
-        Ok(())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let store =
-            apple_native_keyring_store::keychain::Store::new().map_err(|e| e.to_string())?;
-        keyring_core::set_default_store(store);
-        Ok(())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        Err("no keychain support on this platform".to_string())
-    }
-}
-
-impl OsKeychain {
-    fn entry(account: &str) -> Result<keyring_core::Entry, String> {
-        keyring_core::Entry::new(KEYCHAIN_SERVICE, account).map_err(|e| e.to_string())
-    }
-}
-
-impl Keychain for OsKeychain {
-    fn get(&self, account: &str) -> Result<Option<Secret>, String> {
-        match Self::entry(account)?.get_password() {
-            Ok(password) => Ok(Some(Secret::new(password))),
-            Err(keyring_core::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e.to_string()),
-        }
-    }
-
-    fn set(&self, account: &str, secret: &Secret) -> Result<(), String> {
-        Self::entry(account)?
-            .set_password(secret.expose())
-            .map_err(|e| e.to_string())
-    }
-
-    fn delete(&self, account: &str) -> Result<(), String> {
-        match Self::entry(account)?.delete_credential() {
-            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
+        vec![Source::Prompt]
     }
 }
 
@@ -249,8 +175,6 @@ pub struct Target {
     pub port: u16,
     pub database: String,
     pub user: String,
-    /// Keychain account name, see `Profile::keychain_account`.
-    pub account: String,
     /// Environment variable to read. `PGPASSWORD` when not set.
     pub env_var: Option<String>,
 }
@@ -258,7 +182,7 @@ pub struct Target {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     Found(Secret, Source),
-    /// No stored password. The caller should ask the user.
+    /// No password was found. The caller should ask the user.
     NeedsPrompt,
     /// Nothing found and prompting is not enabled.
     NotFound,
@@ -272,9 +196,8 @@ pub struct Resolution {
     pub notes: Vec<String>,
 }
 
-/// Where lookups read from. Tests replace each part.
+/// Where lookups read from. Tests replace it.
 pub struct Environment<'a> {
-    pub keychain: Option<&'a dyn Keychain>,
     pub env: &'a dyn Fn(&str) -> Option<String>,
 }
 
@@ -283,19 +206,6 @@ pub fn resolve(order: &[Source], target: &Target, environment: &Environment) -> 
     let mut notes = Vec::new();
     for source in order {
         let found = match source {
-            Source::Keychain => match environment.keychain {
-                None => {
-                    notes.push("The OS keychain is not available".to_string());
-                    None
-                }
-                Some(keychain) => match keychain.get(&target.account) {
-                    Ok(secret) => secret,
-                    Err(e) => {
-                        notes.push(format!("Keychain lookup failed: {e}"));
-                        None
-                    }
-                },
-            },
             Source::Pgpass => pgpass_path(environment.env).and_then(|path| {
                 match read_pgpass(
                     &path,
@@ -341,37 +251,6 @@ pub fn resolve(order: &[Source], target: &Target, environment: &Environment) -> 
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    /// In-memory keychain for tests.
-    #[derive(Default)]
-    pub struct MemoryKeychain {
-        items: Mutex<HashMap<String, String>>,
-        pub fail: bool,
-    }
-
-    impl Keychain for MemoryKeychain {
-        fn get(&self, account: &str) -> Result<Option<Secret>, String> {
-            if self.fail {
-                return Err("locked".to_string());
-            }
-            let items = self.items.lock().map_err(|e| e.to_string())?;
-            Ok(items.get(account).map(|v| Secret::new(v.clone())))
-        }
-
-        fn set(&self, account: &str, secret: &Secret) -> Result<(), String> {
-            let mut items = self.items.lock().map_err(|e| e.to_string())?;
-            items.insert(account.to_string(), secret.expose().to_string());
-            Ok(())
-        }
-
-        fn delete(&self, account: &str) -> Result<(), String> {
-            let mut items = self.items.lock().map_err(|e| e.to_string())?;
-            items.remove(account);
-            Ok(())
-        }
-    }
 
     fn target() -> Target {
         Target {
@@ -379,7 +258,6 @@ pub mod tests {
             port: 5432,
             database: "app".to_string(),
             user: "alice".to_string(),
-            account: "alice@db.example.com:5432/app".to_string(),
             env_var: None,
         }
     }
@@ -418,7 +296,24 @@ pub mod tests {
             assert_eq!(Source::from_name(source.name()), Some(source));
         }
         assert_eq!(Source::from_name("vault"), None);
-        assert_eq!(Source::default_order(), Source::ALL);
+        assert_eq!(
+            Source::from_name("keychain"),
+            None,
+            "oxpecker has no keychain support"
+        );
+    }
+
+    #[test]
+    fn by_default_nothing_is_read_and_the_user_is_asked() {
+        assert_eq!(Source::default_order(), [Source::Prompt]);
+        let env = |_: &str| Some("from-env".to_string());
+        let environment = Environment { env: &env };
+        let r = resolve(&Source::default_order(), &target(), &environment);
+        assert_eq!(
+            r.outcome,
+            Outcome::NeedsPrompt,
+            "the environment is ignored unless enabled"
+        );
     }
 
     // -- .pgpass --------------------------------------------------------------
@@ -528,50 +423,10 @@ db.example.com:*:app:alice:with\\:colon\\\\and:more
     // -- resolve --------------------------------------------------------------
 
     #[test]
-    fn keychain_comes_first_by_default() {
-        let keychain = MemoryKeychain::default();
-        keychain
-            .set(
-                "alice@db.example.com:5432/app",
-                &Secret::new("from-keychain"),
-            )
-            .expect("set");
-        let env = |k: &str| (k == "PGPASSWORD").then(|| "from-env".to_string());
-        let environment = Environment {
-            keychain: Some(&keychain),
-            env: &env,
-        };
-        let r = resolve(&Source::default_order(), &target(), &environment);
-        assert_eq!(found(&r), Some(("from-keychain", Source::Keychain)));
-    }
-
-    #[test]
     fn order_is_configurable() {
-        let keychain = MemoryKeychain::default();
-        keychain
-            .set(
-                "alice@db.example.com:5432/app",
-                &Secret::new("from-keychain"),
-            )
-            .expect("set");
         let env = |k: &str| (k == "PGPASSWORD").then(|| "from-env".to_string());
-        let environment = Environment {
-            keychain: Some(&keychain),
-            env: &env,
-        };
-        let r = resolve(&[Source::Env, Source::Keychain], &target(), &environment);
-        assert_eq!(found(&r), Some(("from-env", Source::Env)));
-    }
-
-    #[test]
-    fn falls_through_to_the_environment() {
-        let keychain = MemoryKeychain::default();
-        let env = |k: &str| (k == "PGPASSWORD").then(|| "from-env".to_string());
-        let environment = Environment {
-            keychain: Some(&keychain),
-            env: &env,
-        };
-        let r = resolve(&Source::default_order(), &target(), &environment);
+        let environment = Environment { env: &env };
+        let r = resolve(&[Source::Env, Source::Prompt], &target(), &environment);
         assert_eq!(found(&r), Some(("from-env", Source::Env)));
     }
 
@@ -582,10 +437,7 @@ db.example.com:*:app:alice:with\\:colon\\\\and:more
             "PROD_DB_PW" => Some("right".to_string()),
             _ => None,
         };
-        let environment = Environment {
-            keychain: None,
-            env: &env,
-        };
+        let environment = Environment { env: &env };
         let mut t = target();
         t.env_var = Some("PROD_DB_PW".to_string());
         let r = resolve(&[Source::Env], &t, &environment);
@@ -595,59 +447,26 @@ db.example.com:*:app:alice:with\\:colon\\\\and:more
     #[test]
     fn an_empty_variable_counts_as_unset() {
         let env = |k: &str| (k == "PGPASSWORD").then(String::new);
-        let environment = Environment {
-            keychain: None,
-            env: &env,
-        };
+        let environment = Environment { env: &env };
         let r = resolve(&[Source::Env], &target(), &environment);
         assert_eq!(r.outcome, Outcome::NotFound);
     }
 
     #[test]
     fn nothing_found_asks_when_prompting_is_enabled() {
-        let keychain = MemoryKeychain::default();
-        let environment = Environment {
-            keychain: Some(&keychain),
-            env: &no_env,
-        };
-        let r = resolve(&Source::default_order(), &target(), &environment);
+        let environment = Environment { env: &no_env };
+        let r = resolve(&[Source::Env, Source::Prompt], &target(), &environment);
         assert_eq!(r.outcome, Outcome::NeedsPrompt);
-        let r = resolve(&[Source::Keychain, Source::Env], &target(), &environment);
+        let r = resolve(&[Source::Env], &target(), &environment);
         assert_eq!(r.outcome, Outcome::NotFound);
     }
 
     #[test]
     fn prompt_in_front_stops_the_search() {
         let env = |k: &str| (k == "PGPASSWORD").then(|| "from-env".to_string());
-        let environment = Environment {
-            keychain: None,
-            env: &env,
-        };
+        let environment = Environment { env: &env };
         let r = resolve(&[Source::Prompt, Source::Env], &target(), &environment);
         assert_eq!(r.outcome, Outcome::NeedsPrompt);
-    }
-
-    #[test]
-    fn a_broken_keychain_is_reported_and_skipped() {
-        let keychain = MemoryKeychain {
-            fail: true,
-            ..Default::default()
-        };
-        let env = |k: &str| (k == "PGPASSWORD").then(|| "from-env".to_string());
-        let environment = Environment {
-            keychain: Some(&keychain),
-            env: &env,
-        };
-        let r = resolve(&Source::default_order(), &target(), &environment);
-        assert_eq!(found(&r), Some(("from-env", Source::Env)));
-        assert!(r.notes.iter().any(|n| n.contains("Keychain lookup failed")));
-
-        let environment = Environment {
-            keychain: None,
-            env: &env,
-        };
-        let r = resolve(&[Source::Keychain], &target(), &environment);
-        assert!(r.notes.iter().any(|n| n.contains("not available")));
     }
 
     #[test]
@@ -655,10 +474,7 @@ db.example.com:*:app:alice:with\\:colon\\\\and:more
         let path = temp_file("note", "db.example.com:5432:app:alice:topsecret\n", 0o666);
         let path_text = path.display().to_string();
         let env = move |k: &str| (k == "PGPASSFILE").then(|| path_text.clone());
-        let environment = Environment {
-            keychain: None,
-            env: &env,
-        };
+        let environment = Environment { env: &env };
         let r = resolve(&[Source::Pgpass], &target(), &environment);
         assert_eq!(r.outcome, Outcome::NotFound);
         assert_eq!(r.notes.len(), 1);
@@ -670,25 +486,8 @@ db.example.com:*:app:alice:with\\:colon\\\\and:more
         let path = temp_file("use", "db.example.com:5432:app:alice:from-pgpass\n", 0o600);
         let path_text = path.display().to_string();
         let env = move |k: &str| (k == "PGPASSFILE").then(|| path_text.clone());
-        let environment = Environment {
-            keychain: None,
-            env: &env,
-        };
+        let environment = Environment { env: &env };
         let r = resolve(&[Source::Pgpass, Source::Env], &target(), &environment);
         assert_eq!(found(&r), Some(("from-pgpass", Source::Pgpass)));
-    }
-
-    #[test]
-    fn os_keychain_round_trip_through_a_mock_store() {
-        // The default store is process-wide, so this is the only test that sets it.
-        keyring_core::set_default_store(keyring_core::mock::Store::new().expect("mock store"));
-        let keychain = OsKeychain;
-        assert_eq!(keychain.get("nobody@h:1/d"), Ok(None));
-        keychain.set("a@h:1/d", &Secret::new("pw")).expect("set");
-        assert_eq!(keychain.get("a@h:1/d"), Ok(Some(Secret::new("pw"))));
-        keychain.delete("a@h:1/d").expect("delete");
-        assert_eq!(keychain.get("a@h:1/d"), Ok(None));
-        keychain.delete("a@h:1/d").expect("deleting twice is fine");
-        keyring_core::unset_default_store();
     }
 }

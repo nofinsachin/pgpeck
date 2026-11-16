@@ -26,7 +26,6 @@ inclusion: always
 | Configuration | TOML via `serde` and `toml` | Proposed |
 | Logging | `tracing` with a file subscriber | Proposed |
 | Clipboard | `arboard` for system clipboard, plus OSC 52 output | Proposed |
-| Keychain access | `keyring` crate | Proposed |
 
 Add a dependency only when it is needed by a requirement. Prefer well-maintained crates with few transitive dependencies.
 

@@ -1,18 +1,18 @@
+┌ Context ─────────────────────────────────────────────────────────────────────┐
+│Welcome to oxpecker. Press C to connect to a database.                        │
+│Press Esc to get back to these commands.                                      │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
 ┌ ▶ Editor ────────────────────────────────────────────────────────────────────┐
 │1 -- users per day                                                            │
 │2 select id, name                                                             │
 │3   from users                                                                │
 │4    where name = 'a;b' and n > 10;                                           │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌ Context ─────────────────────────────────────────────────────────────────────┐
-│Not connected. Press Ctrl+O to connect.                                       │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ Results ─────────────────────────────────────────────────────────────────────┐
-│No results yet. Run a statement with F5.                                      │
+│No results yet. Run a statement with Ctrl+R.                                  │
 │                                                                              │
 │                                                                              │
 │                                                                              │
@@ -20,5 +20,5 @@
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-F5 run statement  Ctrl+O connect  F1 help  F6 next pane  Ctrl+Q quit
+Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 4, Col 34

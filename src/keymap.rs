@@ -25,6 +25,8 @@ pub enum Action {
     FocusResults,
     FocusNext,
     FocusPrev,
+    /// Leaves the editor for the commands pane, where single keys work.
+    FocusCommands,
     ToggleContext,
     ToggleResults,
     HelpToggle,
@@ -73,6 +75,7 @@ const ACTIONS: &[(&str, Action)] = &[
     ("focus.results", Action::FocusResults),
     ("focus.next", Action::FocusNext),
     ("focus.prev", Action::FocusPrev),
+    ("focus.commands", Action::FocusCommands),
     ("view.toggle_context", Action::ToggleContext),
     ("view.toggle_results", Action::ToggleResults),
     ("help.toggle", Action::HelpToggle),
@@ -247,7 +250,8 @@ impl Action {
         match self {
             Action::AppQuit => "quit",
             Action::FocusContext => "focus context",
-            Action::FocusEditor => "focus editor",
+            Action::FocusCommands => "commands",
+            Action::FocusEditor => "edit",
             Action::FocusResults => "focus results",
             Action::FocusNext => "next pane",
             Action::FocusPrev => "previous pane",
@@ -265,7 +269,7 @@ impl Action {
             Action::BufferReopen => "reopen closed buffer",
             Action::ConnectionOpen => "connect",
             Action::ConnectionReconnect => "reconnect",
-            Action::QueryRun => "run statement",
+            Action::QueryRun => "run",
             Action::QueryCancel => "cancel query",
             Action::ResultsUp => "row up",
             Action::ResultsDown => "row down",
@@ -305,6 +309,8 @@ pub enum Scope {
     Completion,
     /// The connection picker.
     Picker,
+    /// The form for entering connection details.
+    Form,
     /// The password prompt.
     Prompt,
     Dialog,
@@ -319,6 +325,7 @@ impl Scope {
             Scope::Results => "results",
             Scope::Completion => "completion",
             Scope::Picker => "picker",
+            Scope::Form => "form",
             Scope::Prompt => "prompt",
             Scope::Dialog => "dialog",
         }
@@ -332,6 +339,7 @@ impl Scope {
             Scope::Results,
             Scope::Completion,
             Scope::Picker,
+            Scope::Form,
             Scope::Prompt,
             Scope::Dialog,
         ]
@@ -344,7 +352,12 @@ impl Scope {
     fn forbids_printable(self) -> bool {
         matches!(
             self,
-            Scope::Global | Scope::Editor | Scope::Completion | Scope::Picker | Scope::Prompt
+            Scope::Global
+                | Scope::Editor
+                | Scope::Completion
+                | Scope::Picker
+                | Scope::Form
+                | Scope::Prompt
         )
     }
 }
@@ -578,9 +591,10 @@ impl Keymap {
         list
     }
 
-    /// The most convenient key for `action` in the given scopes: fewest
-    /// modifiers first, then alphabetical. `usable` can exclude keys that
-    /// do not work in the current context.
+    /// The most convenient key for `action` in the given scopes. Fewest
+    /// modifiers first, then not a function key, then the shortest name
+    /// (`e` before `Enter`). `usable` can exclude keys that do not work in the
+    /// current context.
     pub fn key_for(
         &self,
         action: Action,
@@ -593,7 +607,15 @@ impl Keymap {
             .filter(|(_, a)| *a == action)
             .map(|(k, _)| k)
             .filter(|k| usable(k))
-            .min_by_key(|k| (k.mods.bits().count_ones(), k.to_string()))
+            .min_by_key(|k| {
+                let name = k.to_string();
+                (
+                    k.mods.bits().count_ones(),
+                    matches!(k.code, KeyCode::F(_)),
+                    name.chars().count(),
+                    name,
+                )
+            })
     }
 }
 
@@ -720,6 +742,7 @@ mod tests {
             Scope::Results,
             Scope::Completion,
             Scope::Picker,
+            Scope::Form,
             Scope::Prompt,
             Scope::Dialog,
         ];
@@ -859,11 +882,11 @@ mod tests {
     }
 
     #[test]
-    fn key_for_prefers_fewest_modifiers() {
+    fn key_for_prefers_few_modifiers_then_plain_keys_then_short_names() {
         let keymap = Keymap::default_keymap();
         assert_eq!(
             keymap.key_for(Action::FocusNext, &[Scope::Global], |_| true),
-            Some(chord("f6"))
+            Some(chord("tab"))
         );
         assert_eq!(
             keymap.key_for(Action::FocusEditor, &[Scope::Global], |_| true),
