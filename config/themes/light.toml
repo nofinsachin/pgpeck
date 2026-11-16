@@ -20,3 +20,4 @@ value = "#1e1611"          # near black
 line_number = "#b09a80"
 cursor_line_bg = "#efe0c0"
 background = "#faf3e0"     # cream
+border = "#b59a73"

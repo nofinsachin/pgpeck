@@ -143,11 +143,13 @@ pub struct ResultsBody {
     pub summary: Rect,
     pub tabs: Option<Rect>,
     pub header: Rect,
+    /// The line between the header and the rows.
+    pub rule: Rect,
     pub rows: Rect,
 }
 
 /// Splits the inside of the results pane: a summary line, an optional tab
-/// line, the column header, then the rows.
+/// line, the column header, a rule under it, then the rows.
 pub fn results_body(pane: Rect, with_tabs: bool) -> ResultsBody {
     let inner = pane.inner(Margin::new(1, 1));
     let row = |offset: u16| Rect {
@@ -156,11 +158,12 @@ pub fn results_body(pane: Rect, with_tabs: bool) -> ResultsBody {
         ..inner
     };
     let tab_height = u16::from(with_tabs);
-    let rows_top = 2 + tab_height;
+    let rows_top = 3 + tab_height;
     ResultsBody {
         summary: row(0),
         tabs: with_tabs.then(|| row(1)),
         header: row(1 + tab_height),
+        rule: row(2 + tab_height),
         rows: Rect {
             y: inner.y.saturating_add(rows_top).min(inner.bottom()),
             height: inner.height.saturating_sub(rows_top),

@@ -817,7 +817,8 @@ fn draw_grid(
         used += separator + shown;
     }
 
-    let separator = || Span::styled(" │ ", Style::new().fg(theme.dimmed));
+    let line = Style::new().fg(theme.border);
+    let separator = || Span::styled(" │ ", line);
     // Bold on a filled bar, so the header stands out even without color.
     let header_style = Style::new()
         .fg(theme.header_fg)
@@ -826,7 +827,7 @@ fn draw_grid(
     let mut header = Vec::new();
     for (n, (index, width)) in visible.iter().enumerate() {
         if n > 0 {
-            header.push(Span::styled(" │ ", header_style));
+            header.push(Span::styled(" │ ", line));
         }
         header.push(Span::styled(
             fit(&clean_cell(&set.columns[*index]), *width),
@@ -837,6 +838,18 @@ fn draw_grid(
         Paragraph::new(Line::from(header)).style(header_style),
         body.header,
     );
+
+    // A rule under the header, joined to the column separators.
+    let mut rule = String::new();
+    for (n, (_, width)) in visible.iter().enumerate() {
+        if n > 0 {
+            rule.push_str("─┼─");
+        }
+        rule.push_str(&"─".repeat(*width));
+    }
+    let missing = total_width.saturating_sub(rule.chars().count());
+    rule.push_str(&"─".repeat(missing));
+    frame.render_widget(Paragraph::new(Line::styled(rule, line)), body.rule);
 
     let null_style = Style::new()
         .fg(theme.null)
@@ -2800,5 +2813,47 @@ mod tests {
         assert!(!render(&a, 160, 24).contains("┌ Trends"));
         key(&mut a, KeyCode::F(7), KeyModifiers::NONE);
         assert!(render(&a, 160, 24).contains("┌ Trends"));
+    }
+
+    #[test]
+    fn the_result_grid_has_a_rule_under_the_header_and_lines_between_columns() {
+        let mut a = connected_app(90, 24);
+        let conn = a.state.connections[0].id;
+        let doc = a.state.doc().id;
+        let set = ResultSet {
+            columns: vec!["id".to_string(), "name".to_string(), "note".to_string()],
+            rows: vec![
+                vec![Some("1".into()), Some("Ada".into()), None],
+                vec![
+                    Some("2".into()),
+                    Some("Grace".into()),
+                    Some("admiral".into()),
+                ],
+            ],
+            total_rows: 2,
+            tag: "SELECT 2".to_string(),
+        };
+        a.update(Event::Background(
+            crate::events::Background::QueryFinished {
+                conn,
+                doc,
+                output: crate::db::QueryOutput {
+                    sets: vec![set],
+                    error: None,
+                    elapsed: std::time::Duration::from_millis(3),
+                    tx: crate::db::TxState::Idle,
+                },
+            },
+        ));
+        let out = render(&a, 90, 24);
+        for expected in [
+            "id │ name  │ note",
+            "───┼───────┼─────",
+            "1  │ Ada   │ NULL",
+            "2  │ Grace │ admiral",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert_snapshot("grid_90x24", &out);
     }
 }
