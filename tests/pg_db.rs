@@ -428,3 +428,31 @@ async fn the_catalog_lists_user_objects_with_their_schemas() {
     let out = db::run(&session, "drop schema oxp_cat cascade", 100).await;
     assert!(out.error.is_none(), "{:?}", out.error);
 }
+
+#[tokio::test]
+async fn the_largest_tables_are_listed_biggest_first() {
+    let url = database!();
+    let (session, _) = connect(&url).await;
+    let setup = "
+        drop schema if exists oxp_top cascade;
+        create schema oxp_top;
+        create table oxp_top.small as select generate_series(1, 10) as n;
+        create table oxp_top.big as select generate_series(1, 200000) as n, md5(random()::text) as t;";
+    let out = db::run(&session, setup, 100).await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+
+    let stats = db::stats(&session).await.expect("stats");
+    assert!(stats.top_tables.len() <= db::TOP_TABLES);
+    let sizes: Vec<u64> = stats.top_tables.iter().map(|t| t.bytes).collect();
+    assert!(sizes.windows(2).all(|w| w[0] >= w[1]), "{sizes:?}");
+    let position = |name: &str| stats.top_tables.iter().position(|t| t.name == name);
+    let big = position("big").expect("the big table is among the largest");
+    assert!(position("small").is_none_or(|small| big < small));
+    assert!(stats
+        .top_tables
+        .iter()
+        .all(|t| !t.schema.starts_with("pg_") && t.schema != "information_schema"));
+
+    let out = db::run(&session, "drop schema oxp_top cascade", 100).await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+}

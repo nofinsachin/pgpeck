@@ -267,7 +267,32 @@ pub struct SessionStats {
     pub uptime_secs: u64,
     /// True when the role sees every session's state.
     pub sees_all_sessions: bool,
+    /// The biggest tables, largest first. Empty when they cannot be read.
+    pub top_tables: Vec<TableSize>,
 }
+
+/// A table and what it takes on disk, indexes and TOAST included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSize {
+    pub schema: String,
+    pub name: String,
+    pub bytes: u64,
+    /// The planner's estimate, `None` before the first vacuum or analyze.
+    pub rows_estimate: Option<u64>,
+}
+
+/// How many tables the trends pane lists.
+pub const TOP_TABLES: usize = 5;
+
+const TOP_TABLES_SQL: &str = "
+select n.nspname, c.relname, pg_total_relation_size(c.oid), c.reltuples::bigint
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+where c.relkind in ('r', 'p', 'm')
+  and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
+  and not c.relispartition
+order by 3 desc, 1, 2
+limit 5
+";
 
 const STATS_SQL: &str = "
 with me as (
@@ -297,18 +322,32 @@ select
 /// Reads `SessionStats`. Call it only when the session is idle: it runs on the
 /// user's own connection and must not start or break a transaction.
 pub async fn stats(session: &Session) -> Result<SessionStats, DbError> {
+    // One round trip, so nothing the user runs can slip in between the two
+    // reads and keep the connection busy longer than the numbers need.
     let messages = session
         .client
-        .simple_query(STATS_SQL)
+        .simple_query(&format!("{STATS_SQL};{TOP_TABLES_SQL}"))
         .await
         .map_err(|e| DbError::from(&e))?;
-    let row = messages
-        .into_iter()
-        .find_map(|m| match m {
-            SimpleQueryMessage::Row(r) => Some(r),
-            _ => None,
-        })
+    let mut rows = messages.into_iter().filter_map(|m| match m {
+        SimpleQueryMessage::Row(r) => Some(r),
+        _ => None,
+    });
+    let row = rows
+        .next()
         .ok_or_else(|| DbError::new("the server returned no statistics"))?;
+    let top_tables = rows
+        .filter_map(|r| {
+            Some(TableSize {
+                schema: r.get(0)?.to_string(),
+                name: r.get(1)?.to_string(),
+                bytes: r.get(2)?.parse().ok()?,
+                // Negative estimates mean "never analyzed".
+                rows_estimate: r.get(3).and_then(|v| v.parse::<u64>().ok()),
+            })
+        })
+        .take(TOP_TABLES)
+        .collect();
     let int = |i: usize| row.get(i).and_then(|v| v.parse::<u64>().ok());
     Ok(SessionStats {
         connections: int(0).unwrap_or(0),
@@ -322,6 +361,7 @@ pub async fn stats(session: &Session) -> Result<SessionStats, DbError> {
         deadlocks: int(8).unwrap_or(0),
         uptime_secs: int(9).unwrap_or(0),
         sees_all_sessions: row.get(10) == Some("t"),
+        top_tables,
     })
 }
 

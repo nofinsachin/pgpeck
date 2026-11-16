@@ -48,6 +48,7 @@ The keys, all shown on screen:
 | | `F5` | refresh the numbers now |
 | | `Esc` | back to the context pane |
 | | `Z` | roll back an open or failed transaction |
+| Any pane | `F7` | show or hide the Trends pane (the five largest tables, drawn when the terminal is 140 columns or wider) |
 | Any pane | `Ctrl+P` | find a schema object (the Find window) |
 | Find window | `Enter` | put the object's name in the editor, as listed, and copy it |
 | | `Alt+T` `V` `M` `O` `F` `Y` `N` | show only tables, views, materialized views, foreign tables, functions, types or schemas. Press again to show all |

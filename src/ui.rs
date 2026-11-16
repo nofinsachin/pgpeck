@@ -44,6 +44,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     if let Some(rect) = areas.context {
         draw_context(frame, app, theme, rect);
     }
+    if let Some(rect) = areas.trends {
+        draw_trends(frame, app, theme, rect);
+    }
     if let Some(rect) = areas.session {
         draw_session(frame, app, theme, rect);
     }
@@ -228,6 +231,68 @@ fn draw_session(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     } else {
         frame.render_widget(Paragraph::new(view.compact()), inner);
     }
+}
+
+/// The trends pane: the largest tables of the connected database, as bars.
+/// It is read-only and never takes focus.
+fn draw_trends(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let dim = Style::new().fg(theme.dimmed);
+    let value = Style::new().fg(theme.value);
+    let block = Block::bordered()
+        .title(" Trends: largest tables ")
+        .border_style(dim)
+        .title_style(dim);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some(conn) = app.state.active_connection() else {
+        frame.render_widget(Paragraph::new(Line::styled("Not connected", dim)), inner);
+        return;
+    };
+    let Some(stats) = &conn.stats else {
+        let text = if conn.status == ConnStatus::Connected {
+            "Reading…"
+        } else {
+            "Not connected"
+        };
+        frame.render_widget(Paragraph::new(Line::styled(text, dim)), inner);
+        return;
+    };
+    // Five rows fit exactly, so the title does the work of a heading.
+    let mut lines = Vec::new();
+    if stats.top_tables.is_empty() {
+        lines.push(Line::styled("No tables to show", dim));
+    }
+    let largest = stats.top_tables.iter().map(|t| t.bytes).max().unwrap_or(0);
+    let width = usize::from(inner.width);
+    let size_width = 9;
+    let bar_width = (width / 4).clamp(4, 12);
+    let name_width = width.saturating_sub(bar_width + size_width + 2).max(6);
+    for table in &stats.top_tables {
+        let name = if table.schema == "public" {
+            table.name.clone()
+        } else {
+            format!("{}.{}", table.schema, table.name)
+        };
+        // At least one block, so a small table is still visible.
+        let filled = if largest == 0 {
+            0
+        } else {
+            ((table.bytes as f64 / largest as f64) * bar_width as f64).ceil() as usize
+        };
+        let filled = filled.clamp(1, bar_width);
+        lines.push(Line::from(vec![
+            Span::styled(fit(&clean_cell(&name), name_width), value),
+            Span::raw(" "),
+            Span::styled("█".repeat(filled), Style::new().fg(theme.focus)),
+            Span::styled(
+                "░".repeat(bar_width - filled),
+                Style::new().fg(theme.dimmed),
+            ),
+            Span::styled(format!("{:>size_width$}", format_bytes(table.bytes)), dim),
+        ]));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Inside the session pane, wide enough for identity and server side by side.
@@ -2221,6 +2286,7 @@ mod tests {
             deadlocks: 0,
             uptime_secs: 3 * 86400 + 4 * 3600,
             sees_all_sessions: true,
+            top_tables: Vec::new(),
         }
     }
 
@@ -2270,7 +2336,8 @@ mod tests {
             let areas = layout::compute(Rect::new(0, 0, width, 24), &a.state, &a.config);
             let (c, s) = (areas.context.expect("c"), areas.session.expect("s"));
             assert!(s.width > c.width, "{width}: {c:?} {s:?}");
-            assert_eq!(c.width + s.width, width);
+            let trends = areas.trends.map_or(0, |t| t.width);
+            assert_eq!(c.width + s.width + trends, width);
         }
     }
 
@@ -2680,5 +2747,58 @@ mod tests {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
         assert_snapshot("find_90x24", &out);
+    }
+
+    fn table_size(schema: &str, name: &str, bytes: u64) -> crate::db::TableSize {
+        crate::db::TableSize {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            bytes,
+            rows_estimate: Some(1000),
+        }
+    }
+
+    #[test]
+    fn a_wide_terminal_shows_the_largest_tables_beside_the_session() {
+        let mut stats = sample_stats();
+        stats.top_tables = vec![
+            table_size("public", "events", 900_000_000),
+            table_size("public", "orders", 450_000_000),
+            table_size("archive", "orders_2023", 120_000_000),
+            table_size("public", "users", 8_000_000),
+            table_size("public", "tiny", 10_000),
+        ];
+        let a = with_stats(160, 24, stats);
+        let out = render(&a, 160, 24);
+        for expected in [
+            "Trends: largest tables",
+            "events",
+            "archive.orders_2023",
+            "858.3 MB",
+            "9.8 kB",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        // The bar of the largest table is full, and a small table keeps one block.
+        let events = out.lines().find(|l| l.contains("events")).expect("row");
+        assert!(events.contains(&"█".repeat(8)), "{events}");
+        let tiny = out.lines().find(|l| l.contains("tiny")).expect("row");
+        assert!(tiny.contains('█'), "{tiny}");
+        assert_snapshot("trends_160x24", &out);
+    }
+
+    #[test]
+    fn a_narrower_terminal_does_not_draw_the_trends() {
+        let a = with_stats(130, 24, sample_stats());
+        assert!(!render(&a, 130, 24).contains("┌ Trends"));
+    }
+
+    #[test]
+    fn f7_hides_and_shows_the_trends() {
+        let mut a = with_stats(160, 24, sample_stats());
+        key(&mut a, KeyCode::F(7), KeyModifiers::NONE);
+        assert!(!render(&a, 160, 24).contains("┌ Trends"));
+        key(&mut a, KeyCode::F(7), KeyModifiers::NONE);
+        assert!(render(&a, 160, 24).contains("┌ Trends"));
     }
 }

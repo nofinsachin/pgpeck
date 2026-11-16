@@ -56,6 +56,8 @@ pub struct State {
     pub focus: Pane,
     pub show_context: bool,
     pub show_results: bool,
+    /// The trends pane, drawn only when the terminal is wide enough.
+    pub show_trends: bool,
     pub help_open: bool,
     /// First visible line of the help overlay.
     pub help_scroll: usize,
@@ -279,6 +281,7 @@ impl State {
             },
             show_context: config.ui.show_context_strip,
             show_results: true,
+            show_trends: true,
             help_open: false,
             help_scroll: 0,
             quit: false,
@@ -740,6 +743,16 @@ impl App {
             Action::ToggleContext => {
                 self.state.show_context = !self.state.show_context;
                 self.refocus_if_hidden();
+            }
+            Action::ToggleTrends => {
+                self.state.show_trends = !self.state.show_trends;
+                let key = self.hint_key(Action::ToggleTrends).map(|k| k.to_string());
+                let text = match (self.state.show_trends, key) {
+                    (true, _) => "Trends shown when the terminal is wide enough".to_string(),
+                    (false, Some(key)) => format!("Trends hidden. {key} shows them"),
+                    (false, None) => "Trends hidden".to_string(),
+                };
+                self.notice(text);
             }
             Action::ToggleResults => {
                 self.state.show_results = !self.state.show_results;
@@ -3487,6 +3500,7 @@ mod tests {
             deadlocks: 0,
             uptime_secs: 3 * 86400 + 4 * 3600,
             sees_all_sessions: true,
+            top_tables: Vec::new(),
         }
     }
 

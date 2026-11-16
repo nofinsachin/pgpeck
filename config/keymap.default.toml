@@ -40,6 +40,8 @@
 "shift+tab" = "focus.prev"
 "f3" = "view.toggle_context"
 "f4" = "view.toggle_results"
+# Largest tables, beside the session. Drawn only on wide terminals.
+"f7" = "view.toggle_trends"
 "f1" = "help.toggle"
 "ctrl+n" = "buffer.new"
 "ctrl+w" = "buffer.close"

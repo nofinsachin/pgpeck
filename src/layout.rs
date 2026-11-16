@@ -20,6 +20,11 @@ const CONTEXT_HEIGHT: u16 = 7;
 const CONTEXT_MIN_WIDTH: u16 = 36;
 const SESSION_MIN_WIDTH: u16 = 28;
 
+/// The trends pane needs room beside the other two. Below this width it is
+/// not drawn.
+pub const TRENDS_MIN_WIDTH: u16 = 140;
+const TRENDS_WIDTH: u16 = 44;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Areas {
     /// Set when the terminal is below the minimum size.
@@ -27,6 +32,8 @@ pub struct Areas {
     pub editor: Option<Rect>,
     pub context: Option<Rect>,
     pub session: Option<Rect>,
+    /// Largest tables, shown beside the session pane on wide terminals.
+    pub trends: Option<Rect>,
     pub results: Option<Rect>,
     pub hint: Rect,
     pub status: Rect,
@@ -46,6 +53,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         editor: None,
         context: None,
         session: None,
+        trends: None,
         results: None,
         hint,
         status,
@@ -84,14 +92,23 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     if state.show_context {
         // The session has more to show than the context, so it gets the larger
         // share. The context keeps enough room for its welcome line.
-        let context_width = (context.width * 2 / 5)
+        let with_trends = state.show_trends && context.width >= TRENDS_MIN_WIDTH;
+        let (main, trends) = if with_trends {
+            let [main, trends] =
+                Split::horizontal([Constraint::Min(1), Constraint::Length(TRENDS_WIDTH)])
+                    .areas(context);
+            (main, Some(trends))
+        } else {
+            (context, None)
+        };
+        let context_width = (main.width * 2 / 5)
             .max(CONTEXT_MIN_WIDTH)
-            .min(context.width.saturating_sub(SESSION_MIN_WIDTH));
+            .min(main.width.saturating_sub(SESSION_MIN_WIDTH));
         let [left, right] =
-            Split::horizontal([Constraint::Length(context_width), Constraint::Min(1)])
-                .areas(context);
+            Split::horizontal([Constraint::Length(context_width), Constraint::Min(1)]).areas(main);
         areas.context = Some(left);
         areas.session = Some(right);
+        areas.trends = trends;
     }
     areas.editor = Some(editor);
     areas.results = state.show_results.then_some(results_area);
