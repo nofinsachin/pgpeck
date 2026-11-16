@@ -1,11 +1,11 @@
 # Dark theme: brown, yellow, red, cream and blue accents on a pitch-black
 # background. Colors are names or #rrggbb.
 # Focus, errors and NULL are never conveyed by color alone (R20.9).
-focus = "#f2c230"          # yellow bill
+focus = "#d9aa3c"          # yellow bill
 error = "#e5533d"          # red bill tip
 null = "#8c7b6b"
 dimmed = "#8c7b6b"
-keyword = "#f2c230"
+keyword = "#d9aa3c"
 number = "#e5533d"
 string = "#1e50a2"         # blue
 status_prod = "#c8321f"
@@ -16,7 +16,7 @@ header_bg = "#1e50a2"      # blue bar
 row_alt_bg = "#2b2119"     # dark brown banding
 ok = "#ffffff"             # white
 warn = "#e8892b"           # between yellow and red
-label = "#1e50a2"
+label = "#d9aa3c"
 value = "#ffffff"
 line_number = "#7a6650"
 cursor_line_bg = "#3a2c20" # brown
