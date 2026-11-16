@@ -41,6 +41,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     if let Some(rect) = areas.editor {
         draw_editor(frame, app, theme, rect);
     }
+    if let Some(rect) = areas.art {
+        draw_art(frame, theme, rect);
+    }
     if let Some(rect) = areas.context {
         draw_context(frame, app, theme, rect);
     }
@@ -231,6 +234,42 @@ fn draw_session(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     } else {
         frame.render_widget(Paragraph::new(view.compact()), inner);
     }
+}
+
+/// The oxpecker. Each character has a role: the eye and the bill are yellow,
+/// the tip of the bill is red, the branch is tan and the rest is brown.
+const ART: [&str; 6] = [
+    "     ,--.       ",
+    "   .'    '.==>  ",
+    "  /  (o)   |    ",
+    " (   \\___  /    ",
+    "  \\__/  \\_/\\    ",
+    " ~~~~|~|~~~~~   ",
+];
+
+fn draw_art(frame: &mut Frame, theme: &Theme, area: Rect) {
+    let body = Style::new().fg(theme.bird);
+    let mut lines: Vec<Line> = ART
+        .iter()
+        .map(|row| {
+            Line::from(
+                row.chars()
+                    .map(|c| match c {
+                        'o' => Span::styled(
+                            c.to_string(),
+                            Style::new().fg(theme.focus).add_modifier(Modifier::BOLD),
+                        ),
+                        '=' => Span::styled(c.to_string(), Style::new().fg(theme.focus)),
+                        '>' => Span::styled(c.to_string(), Style::new().fg(theme.error)),
+                        '~' => Span::styled(c.to_string(), Style::new().fg(theme.string)),
+                        _ => Span::styled(c.to_string(), body),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    lines.push(Line::styled(" oxpecker", body.add_modifier(Modifier::BOLD)));
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// The trends pane: the largest tables of the connected database, as bars.
@@ -2310,10 +2349,18 @@ mod tests {
         a
     }
 
+    /// Wide enough for the session's two columns: the art takes room from
+    /// the top row, so the trends pane is turned off.
+    fn roomy_session_app(stats: SessionStats) -> App {
+        let mut a = with_stats(150, 24, stats);
+        a.state.show_trends = false;
+        a
+    }
+
     #[test]
     fn a_wide_session_pane_has_identity_on_the_left_and_the_server_on_the_right() {
-        let a = with_stats(130, 24, sample_stats());
-        let out = render(&a, 130, 24);
+        let a = roomy_session_app(sample_stats());
+        let out = render(&a, 150, 24);
         for expected in [
             "Database    app",
             "User        alice",
@@ -2325,7 +2372,7 @@ mod tests {
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
-        assert_snapshot("session_wide_130x24", &out);
+        assert_snapshot("session_wide_150x24", &out);
     }
 
     #[test]
@@ -2349,8 +2396,8 @@ mod tests {
             let areas = layout::compute(Rect::new(0, 0, width, 24), &a.state, &a.config);
             let (c, s) = (areas.context.expect("c"), areas.session.expect("s"));
             assert!(s.width > c.width, "{width}: {c:?} {s:?}");
-            let trends = areas.trends.map_or(0, |t| t.width);
-            assert_eq!(c.width + s.width + trends, width);
+            let others = areas.trends.map_or(0, |t| t.width) + areas.art.map_or(0, |t| t.width);
+            assert_eq!(c.width + s.width + others, width);
         }
     }
 
@@ -2361,8 +2408,8 @@ mod tests {
         stats.sees_all_sessions = false;
         stats.active = Some(0);
         stats.oldest_transaction_secs = None;
-        let a = with_stats(130, 24, stats);
-        let out = render(&a, 130, 24);
+        let a = roomy_session_app(stats);
+        let out = render(&a, 150, 24);
         assert!(out.contains("90 of 100 on server"), "{out}");
         assert!(out.contains("needs the pg_read_all_stats role"), "{out}");
         assert!(out.contains("oldest tx n/a"), "{out}");
@@ -2855,5 +2902,21 @@ mod tests {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
         assert_snapshot("grid_90x24", &out);
+    }
+
+    #[test]
+    fn the_oxpecker_sits_top_left_on_wide_terminals_and_not_on_narrow_ones() {
+        let wide = connected_app(120, 24);
+        let out = render(&wide, 120, 24);
+        let first = out.lines().next().expect("row");
+        assert!(first.starts_with("     ,--."), "{first}");
+        assert!(out.lines().any(|l| l.contains("==>")));
+        assert!(out.lines().any(|l| l.starts_with(" oxpecker")));
+        assert!(out.contains("┌ Context"), "context stays");
+        assert_snapshot("art_120x24", &out);
+
+        let narrow = connected_app(100, 24);
+        let out = render(&narrow, 100, 24);
+        assert!(!out.contains("==>") && !out.contains(" oxpecker"), "{out}");
     }
 }

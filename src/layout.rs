@@ -25,11 +25,17 @@ const SESSION_MIN_WIDTH: u16 = 28;
 pub const TRENDS_MIN_WIDTH: u16 = 140;
 const TRENDS_WIDTH: u16 = 44;
 
+/// The art needs the room beside the context. Below this width it is not drawn.
+pub const ART_MIN_WIDTH: u16 = 110;
+pub const ART_WIDTH: u16 = 18;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Areas {
     /// Set when the terminal is below the minimum size.
     pub message: Option<Rect>,
     pub editor: Option<Rect>,
+    /// The oxpecker in the top left corner.
+    pub art: Option<Rect>,
     pub context: Option<Rect>,
     pub session: Option<Rect>,
     /// Largest tables, shown beside the session pane on wide terminals.
@@ -51,6 +57,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     let mut areas = Areas {
         message: None,
         editor: None,
+        art: None,
         context: None,
         session: None,
         trends: None,
@@ -90,6 +97,15 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     ])
     .areas(body);
     if state.show_context {
+        let context = if body.width >= ART_MIN_WIDTH {
+            let [art, rest] =
+                Split::horizontal([Constraint::Length(ART_WIDTH), Constraint::Min(1)])
+                    .areas(context);
+            areas.art = Some(art);
+            rest
+        } else {
+            context
+        };
         // The session has more to show than the context, so it gets the larger
         // share. The context keeps enough room for its welcome line.
         let with_trends = state.show_trends && context.width >= TRENDS_MIN_WIDTH;
