@@ -2,8 +2,9 @@
 
 A fast, keyboard-driven terminal client for PostgreSQL, written in Rust.
 
-Status: early development. The screen layout, focus handling, keymap and
-configuration loading work. There is no editor or database connection yet.
+Status: early development. The screen layout, focus handling, keymap,
+configuration loading and the SQL editor work. There is no database
+connection yet.
 
 ## Build and run
 

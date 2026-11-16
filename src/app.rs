@@ -1,10 +1,13 @@
 //! Application state and the update function. Nothing here draws or does I/O.
 
 use crossterm::event::KeyCode;
+use ratatui::layout::Rect;
 
 use crate::config::Config;
+use crate::editor::{display_col, Buffer};
 use crate::events::Event;
 use crate::keymap::{Action, KeyChord, Keymap, Scope};
+use crate::layout;
 
 /// A top-level pane that can hold focus. The status bar never does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,10 +42,18 @@ pub struct State {
     pub show_context: bool,
     pub show_results: bool,
     pub help_open: bool,
+    /// First visible line of the help overlay.
+    pub help_scroll: usize,
     pub quit: bool,
     /// One-line message for the status bar.
     pub notice: Option<String>,
     pub size: (u16, u16),
+    pub editor: Buffer,
+    /// First visible line and first visible terminal column of the editor.
+    pub scroll_top: usize,
+    pub scroll_left: usize,
+    /// Text from the last cut or copy. The system clipboard comes later (R14).
+    pub register: String,
 }
 
 impl State {
@@ -52,9 +63,14 @@ impl State {
             show_context: config.ui.show_context_strip,
             show_results: true,
             help_open: false,
+            help_scroll: 0,
             quit: false,
             notice: None,
             size: (0, 0),
+            editor: Buffer::new(),
+            scroll_top: 0,
+            scroll_left: 0,
+            register: String::new(),
         }
     }
 
@@ -69,6 +85,18 @@ impl State {
         }
         panes
     }
+}
+
+/// One row of the help overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HelpLine {
+    Header(String),
+    Binding {
+        key: String,
+        description: &'static str,
+        name: &'static str,
+    },
+    Blank,
 }
 
 pub struct App {
@@ -90,42 +118,155 @@ impl App {
         match event {
             Event::Resize(w, h) => self.state.size = (w, h),
             Event::Key(key) => self.on_key(KeyChord::from_event(&key)),
+            Event::Paste(text) => self.on_paste(&text),
         }
+        self.scroll_to_cursor();
     }
 
     fn on_key(&mut self, chord: KeyChord) {
         let st = &self.state;
-        if !st.help_open && self.tab_is_text(&chord) {
+        // A dialog takes every key.
+        if st.help_open {
+            if let Some(action) = self.keymap.lookup(Scope::Dialog, chord) {
+                self.perform(action);
+            }
             return;
         }
-
-        // A dialog takes every key. Otherwise the focused pane's scope wins
-        // over global. A pane-scoped key never fires in another pane (R4.8).
-        let action = if st.help_open {
-            self.keymap.lookup(Scope::Dialog, chord)
+        // The focused pane's scope wins over global. A pane-scoped key never
+        // fires in another pane (R4.8). With tab-indent off, Tab skips the
+        // editor scope and reaches the global focus binding (R4.6).
+        let editor_ignores_tab = st.focus == Pane::Editor
+            && !self.config.editor.tab_indent
+            && matches!(chord.code, KeyCode::Tab | KeyCode::BackTab);
+        let pane_action = if editor_ignores_tab {
+            None
         } else {
-            self.keymap
-                .lookup(st.focus.scope(), chord)
-                .or_else(|| self.keymap.lookup(Scope::Global, chord))
+            self.keymap.lookup(st.focus.scope(), chord)
         };
-        if let Some(action) = action {
-            self.perform(action);
+        let action = pane_action.or_else(|| self.keymap.lookup(Scope::Global, chord));
+
+        match action {
+            Some(action) => self.perform(action),
+            // R4.3: in the editor, any printable key without a binding types.
+            None if st.focus == Pane::Editor && chord.is_printable() => {
+                if let KeyCode::Char(c) = chord.code {
+                    let opts = self.config.editor.options();
+                    self.state.notice = None;
+                    self.state.editor.insert_char(c, &opts);
+                }
+            }
+            None => {}
         }
     }
 
-    /// R4.6: Tab belongs to the editor when tab-indent is on. Other keys
-    /// (Alt+1/2/3, F6) always leave the editor (R4.7).
-    fn tab_is_text(&self, chord: &KeyChord) -> bool {
-        self.state.focus == Pane::Editor
-            && self.config.editor.tab_indent
-            && matches!(chord.code, KeyCode::Tab | KeyCode::BackTab)
+    /// Bracketed paste. The text is inserted and never executed (R20.10).
+    fn on_paste(&mut self, text: &str) {
+        if self.state.help_open || self.state.focus != Pane::Editor {
+            return;
+        }
+        let opts = self.config.editor.options();
+        self.state.notice = None;
+        self.state.editor.insert_str(text, &opts);
+    }
+
+    /// True while the editor uses Tab and Shift+Tab for indenting.
+    fn editor_owns_tab(&self) -> bool {
+        self.state.focus == Pane::Editor && self.config.editor.tab_indent
     }
 
     /// The key to show for `action` in the focused pane, for hints.
     pub fn hint_key(&self, action: Action) -> Option<KeyChord> {
         let scopes = [self.state.focus.scope(), Scope::Global];
-        self.keymap
-            .key_for(action, &scopes, |k| !self.tab_is_text(k))
+        let owns_tab = self.editor_owns_tab();
+        self.keymap.key_for(action, &scopes, |k| {
+            !(owns_tab && matches!(k.code, KeyCode::Tab | KeyCode::BackTab))
+        })
+    }
+
+    fn screen(&self) -> Rect {
+        Rect::new(0, 0, self.state.size.0, self.state.size.1)
+    }
+
+    /// Lines in a page-up or page-down step.
+    fn page_lines(&self) -> usize {
+        layout::compute(self.screen(), &self.state, &self.config)
+            .editor
+            .map_or(10, |pane| {
+                let area = layout::editor_area(pane, self.state.editor.line_count());
+                usize::from(area.text.height).max(1)
+            })
+    }
+
+    /// Keeps the cursor inside the editor viewport.
+    fn scroll_to_cursor(&mut self) {
+        let Some(pane) = layout::compute(self.screen(), &self.state, &self.config).editor else {
+            return;
+        };
+        let st = &mut self.state;
+        let area = layout::editor_area(pane, st.editor.line_count());
+        let (height, width) = (usize::from(area.text.height), usize::from(area.text.width));
+        if height == 0 || width == 0 {
+            return;
+        }
+        let cursor = st.editor.cursor();
+        if cursor.line < st.scroll_top {
+            st.scroll_top = cursor.line;
+        } else if cursor.line >= st.scroll_top + height {
+            st.scroll_top = cursor.line + 1 - height;
+        }
+        st.scroll_top = st.scroll_top.min(st.editor.line_count() - 1);
+
+        let line = st
+            .editor
+            .lines()
+            .get(cursor.line)
+            .map_or("", String::as_str);
+        let x = display_col(line, cursor.col);
+        if x < st.scroll_left {
+            st.scroll_left = x;
+        } else if x >= st.scroll_left + width {
+            st.scroll_left = x + 1 - width;
+        }
+    }
+
+    /// Everything the help overlay lists: the focused pane's keys, then the global keys (R5.7).
+    pub fn help_lines(&self) -> Vec<HelpLine> {
+        let mut lines = Vec::new();
+        for scope in [self.state.focus.scope(), Scope::Global] {
+            let bindings = self.keymap.bindings(scope);
+            if bindings.is_empty() {
+                continue;
+            }
+            lines.push(HelpLine::Header(format!("{} keys", scope.name())));
+            for (key, action) in bindings {
+                lines.push(HelpLine::Binding {
+                    key: key.to_string(),
+                    description: action.description(),
+                    name: action.name(),
+                });
+            }
+            lines.push(HelpLine::Blank);
+        }
+        lines
+    }
+
+    /// Rows of help text visible at once, and the furthest the help can scroll.
+    fn help_limits(&self) -> (usize, usize) {
+        let total = self.help_lines().len();
+        let popup = layout::help_popup(self.screen(), total);
+        let visible = usize::from(popup.height.saturating_sub(2)).max(1);
+        (visible, total.saturating_sub(visible))
+    }
+
+    fn scroll_help(&mut self, up: bool, page: bool) {
+        let (visible, max) = self.help_limits();
+        let step = if page { visible } else { 1 };
+        let scroll = &mut self.state.help_scroll;
+        *scroll = if up {
+            scroll.saturating_sub(step)
+        } else {
+            (*scroll + step).min(max)
+        };
     }
 
     fn perform(&mut self, action: Action) {
@@ -151,7 +292,20 @@ impl App {
                 self.state.show_results = !self.state.show_results;
                 self.refocus_if_hidden();
             }
-            Action::HelpToggle => self.state.help_open = !self.state.help_open,
+            Action::HelpToggle => {
+                self.state.help_open = !self.state.help_open;
+                self.state.help_scroll = 0;
+            }
+            Action::HelpScrollUp => self.scroll_help(true, false),
+            Action::HelpScrollDown => self.scroll_help(false, false),
+            Action::HelpPageUp => self.scroll_help(true, true),
+            Action::HelpPageDown => self.scroll_help(false, true),
+            Action::Edit(cmd) => {
+                let opts = self.config.editor.options();
+                let page = self.page_lines();
+                let st = &mut self.state;
+                st.editor.apply(cmd, &opts, page, &mut st.register);
+            }
         }
     }
 
@@ -214,10 +368,11 @@ mod tests {
     }
 
     #[test]
-    fn tab_is_text_in_editor_when_tab_indent_is_on() {
+    fn tab_indents_in_editor_when_tab_indent_is_on() {
         let mut a = app();
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Editor);
+        assert_eq!(a.state.editor.text(), "    ");
         press(&mut a, KeyCode::F(6), KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Context, "F6 always leaves the editor");
     }
@@ -284,14 +439,188 @@ mod tests {
         assert!(a.state.help_open);
     }
 
+    fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+    }
+
     #[test]
-    fn printable_keys_do_nothing_here() {
+    fn printable_keys_type_in_the_editor_including_ones_bound_elsewhere() {
         let mut a = app();
+        // `?` opens help in other panes. In the editor it is just a character (R4.3, R4.4).
+        type_text(&mut a, "select ?, q j");
+        assert_eq!(a.state.editor.text(), "select ?, q j");
+        assert!(!a.state.help_open);
+    }
+
+    #[test]
+    fn shifted_letters_type_as_capitals() {
+        let mut a = app();
+        press(&mut a, KeyCode::Char('A'), KeyModifiers::SHIFT);
+        assert_eq!(a.state.editor.text(), "A");
+    }
+
+    #[test]
+    fn unbound_alt_and_ctrl_keys_do_not_type() {
+        let mut a = app();
+        press(&mut a, KeyCode::Char('c'), KeyModifiers::CONTROL);
+        press(&mut a, KeyCode::Char('k'), KeyModifiers::ALT);
+        assert_eq!(a.state.editor.text(), "");
+    }
+
+    #[test]
+    fn printable_keys_do_nothing_outside_the_editor() {
+        let mut a = app();
+        alt(&mut a, '3');
         let before = a.state.clone();
         for c in ['q', 'j', 'x', ' '] {
             press(&mut a, KeyCode::Char(c), KeyModifiers::NONE);
         }
         assert_eq!(a.state, before);
+        assert_eq!(a.state.editor.text(), "");
+    }
+
+    #[test]
+    fn editor_keys_do_nothing_outside_the_editor() {
+        let mut a = app();
+        type_text(&mut a, "abc");
+        alt(&mut a, '3');
+        for code in [
+            KeyCode::Left,
+            KeyCode::Backspace,
+            KeyCode::Enter,
+            KeyCode::Delete,
+        ] {
+            press(&mut a, code, KeyModifiers::NONE);
+        }
+        assert_eq!(a.state.editor.text(), "abc");
+        assert_eq!(a.state.editor.cursor().col, 3);
+    }
+
+    #[test]
+    fn editing_keys_work_through_the_keymap() {
+        let mut a = app();
+        type_text(&mut a, "ab");
+        press(&mut a, KeyCode::Left, KeyModifiers::NONE);
+        press(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(a.state.editor.text(), "b");
+        press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(a.state.editor.text(), "\nb");
+        press(&mut a, KeyCode::Char('z'), KeyModifiers::CONTROL);
+        assert_eq!(a.state.editor.text(), "b");
+        press(&mut a, KeyCode::Char('y'), KeyModifiers::CONTROL);
+        assert_eq!(a.state.editor.text(), "\nb");
+    }
+
+    #[test]
+    fn select_cut_and_paste_use_the_register() {
+        let mut a = app();
+        type_text(&mut a, "hello");
+        press(&mut a, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        press(&mut a, KeyCode::Char('x'), KeyModifiers::CONTROL);
+        assert_eq!(a.state.editor.text(), "");
+        assert_eq!(a.state.register, "hello");
+        press(&mut a, KeyCode::Char('v'), KeyModifiers::CONTROL);
+        press(&mut a, KeyCode::Char('v'), KeyModifiers::CONTROL);
+        assert_eq!(a.state.editor.text(), "hellohello");
+    }
+
+    #[test]
+    fn shift_arrows_select() {
+        let mut a = app();
+        type_text(&mut a, "abc");
+        press(&mut a, KeyCode::Left, KeyModifiers::SHIFT);
+        press(&mut a, KeyCode::Left, KeyModifiers::SHIFT);
+        assert_eq!(a.state.editor.selected_text().as_deref(), Some("bc"));
+    }
+
+    #[test]
+    fn bracketed_paste_inserts_text_in_the_editor_only() {
+        let mut a = app();
+        a.update(Event::Paste("select 1;\nselect 2;".to_string()));
+        assert_eq!(a.state.editor.text(), "select 1;\nselect 2;");
+        assert!(!a.state.quit);
+
+        alt(&mut a, '3');
+        a.update(Event::Paste("ignored".to_string()));
+        assert_eq!(a.state.editor.text(), "select 1;\nselect 2;");
+
+        alt(&mut a, '2');
+        press(&mut a, KeyCode::F(1), KeyModifiers::NONE);
+        a.update(Event::Paste("ignored".to_string()));
+        assert_eq!(a.state.editor.text(), "select 1;\nselect 2;");
+    }
+
+    #[test]
+    fn pasted_text_with_a_quit_key_sequence_is_just_text() {
+        let mut a = app();
+        a.update(Event::Paste("\u{11}".to_string())); // Ctrl+Q as a raw byte
+        assert!(!a.state.quit);
+        assert_eq!(a.state.editor.text(), "");
+    }
+
+    #[test]
+    fn viewport_follows_the_cursor() {
+        let mut a = app();
+        a.update(Event::Resize(80, 24));
+        for _ in 0..40 {
+            press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        }
+        assert!(a.state.scroll_top > 0);
+        let cursor_line = a.state.editor.cursor().line;
+        let height = a.page_lines();
+        assert!(cursor_line >= a.state.scroll_top && cursor_line < a.state.scroll_top + height);
+        press(&mut a, KeyCode::Home, KeyModifiers::CONTROL);
+        assert_eq!(a.state.scroll_top, 0);
+    }
+
+    #[test]
+    fn viewport_scrolls_sideways_for_long_lines() {
+        let mut a = app();
+        a.update(Event::Resize(80, 24));
+        type_text(&mut a, &"x".repeat(200));
+        assert!(a.state.scroll_left > 100);
+        press(&mut a, KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(a.state.scroll_left, 0);
+    }
+
+    #[test]
+    fn page_keys_move_by_the_visible_height() {
+        let mut a = app();
+        a.update(Event::Resize(80, 24));
+        for _ in 0..60 {
+            press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        }
+        press(&mut a, KeyCode::Home, KeyModifiers::CONTROL);
+        let page = a.page_lines();
+        press(&mut a, KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(a.state.editor.cursor().line, page);
+    }
+
+    #[test]
+    fn help_scrolls_and_stops_at_the_end() {
+        let mut a = app();
+        a.update(Event::Resize(80, 24));
+        press(&mut a, KeyCode::F(1), KeyModifiers::NONE);
+        assert_eq!(a.state.help_scroll, 0);
+        press(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(a.state.help_scroll, 1);
+        for _ in 0..20 {
+            press(&mut a, KeyCode::PageDown, KeyModifiers::NONE);
+        }
+        let (visible, max) = a.help_limits();
+        assert_eq!(a.state.help_scroll, max);
+        assert!(max > 0 && visible < a.help_lines().len());
+        for _ in 0..20 {
+            press(&mut a, KeyCode::PageUp, KeyModifiers::NONE);
+        }
+        assert_eq!(a.state.help_scroll, 0);
+        // Closing and reopening starts at the top again.
+        press(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        press(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        press(&mut a, KeyCode::F(1), KeyModifiers::NONE);
+        assert_eq!(a.state.help_scroll, 0);
     }
 
     #[test]

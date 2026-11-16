@@ -1,5 +1,5 @@
 ┌ ▶ Editor ──────────────────────────────────────────────────────────┐
-│SQL editor (phase 2)                                                │
+│1                                                                   │
 │                                                                    │
 │                                                                    │
 │                                                                    │
@@ -17,4 +17,4 @@
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
 F1 help  F6 next pane  Alt+2 focus editor  F3 toggle context strip
- no connection │ focus: Editor
+ no connection │ focus: Editor │ Ln 1, Col 1
