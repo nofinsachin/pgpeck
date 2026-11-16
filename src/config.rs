@@ -17,6 +17,8 @@ pub struct EditorConfig {
     pub indent_width: usize,
     pub auto_pair: bool,
     pub auto_indent: bool,
+    pub completion: bool,
+    pub completion_min_chars: usize,
 }
 
 impl EditorConfig {
@@ -44,6 +46,8 @@ impl Default for Config {
                 indent_width: 4,
                 auto_pair: true,
                 auto_indent: true,
+                completion: true,
+                completion_min_chars: 2,
             },
             ui: UiConfig {
                 theme: "dark".to_string(),
@@ -58,7 +62,14 @@ impl Default for Config {
 const SCHEMA: &[(&str, &[&str])] = &[
     (
         "editor",
-        &["tab_indent", "indent_width", "auto_pair", "auto_indent"],
+        &[
+            "tab_indent",
+            "indent_width",
+            "auto_pair",
+            "auto_indent",
+            "completion",
+            "completion_min_chars",
+        ],
     ),
     ("ui", &["theme", "show_hint_bar", "show_context_strip"]),
 ];
@@ -125,6 +136,14 @@ impl Config {
             ("editor", "tab_indent") => self.editor.tab_indent = want_bool(value)?,
             ("editor", "auto_pair") => self.editor.auto_pair = want_bool(value)?,
             ("editor", "auto_indent") => self.editor.auto_indent = want_bool(value)?,
+            ("editor", "completion") => self.editor.completion = want_bool(value)?,
+            ("editor", "completion_min_chars") => {
+                self.editor.completion_min_chars = value
+                    .as_integer()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| (1..=10).contains(n))
+                    .ok_or("expected a whole number from 1 to 10")?;
+            }
             ("editor", "indent_width") => {
                 self.editor.indent_width = value
                     .as_integer()

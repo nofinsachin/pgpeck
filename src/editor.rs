@@ -746,6 +746,33 @@ impl Buffer {
         Pos::new(at.line, col)
     }
 
+    // -- completion ---------------------------------------------------------
+
+    /// The word being typed at the cursor and where it starts. `None` inside
+    /// strings, comments and quoted names, in the middle of a word, after a
+    /// dot (a qualified name) and when text is selected.
+    pub fn completion_prefix(&self) -> Option<(Pos, String)> {
+        if self.selection().is_some() {
+            return None;
+        }
+        let text = self.text();
+        let at = self.offset_of(self.cursor);
+        let token = sql::lex(&text).into_iter().find(|t| {
+            t.end == at && matches!(t.kind, TokenKind::Identifier | TokenKind::Keyword)
+        })?;
+        if text[..token.start].ends_with('.') {
+            return None;
+        }
+        Some((self.pos_of(token.start), text[token.start..at].to_string()))
+    }
+
+    /// Replaces the text from `start` to the cursor with `text`.
+    pub fn complete(&mut self, start: Pos, text: &str) {
+        self.begin_command();
+        let end = self.cursor;
+        self.edit(start, end, text, advance(start, text), false);
+    }
+
     // -- brackets -----------------------------------------------------------
 
     fn offset_of(&self, pos: Pos) -> usize {
@@ -1245,6 +1272,72 @@ mod tests {
         b.move_cursor(Motion::Right, false, 1);
         b.move_cursor(Motion::Right, false, 1);
         assert_eq!(b.matching_bracket(), None);
+    }
+
+    // completion
+
+    fn prefix_at_end(text: &str) -> Option<(Pos, String)> {
+        let mut b = Buffer::with_text(text);
+        b.move_cursor(Motion::BufferEnd, false, 1);
+        b.completion_prefix()
+    }
+
+    #[test]
+    fn prefix_is_the_word_before_the_cursor() {
+        assert_eq!(
+            prefix_at_end("select * fr"),
+            Some((Pos::new(0, 9), "fr".to_string()))
+        );
+        assert_eq!(
+            prefix_at_end("a\n  whe"),
+            Some((Pos::new(1, 2), "whe".to_string()))
+        );
+        assert_eq!(
+            prefix_at_end("x_1"),
+            Some((Pos::new(0, 0), "x_1".to_string()))
+        );
+    }
+
+    #[test]
+    fn no_prefix_in_strings_comments_quotes_numbers_or_after_a_dot() {
+        for text in [
+            "'sel",
+            "-- sel",
+            "/* sel",
+            "\"sel",
+            "$$ sel",
+            "t.col",
+            "select 12",
+            "select ",
+            "f(",
+            "x ",
+        ] {
+            assert_eq!(prefix_at_end(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn no_prefix_in_the_middle_of_a_word_or_with_a_selection() {
+        let mut b = Buffer::with_text("select");
+        b.move_cursor(Motion::Right, false, 1);
+        b.move_cursor(Motion::Right, false, 1);
+        assert_eq!(b.completion_prefix(), None);
+        b.move_cursor(Motion::LineEnd, false, 1);
+        assert!(b.completion_prefix().is_some());
+        b.move_cursor(Motion::WordLeft, true, 1);
+        assert_eq!(b.completion_prefix(), None);
+    }
+
+    #[test]
+    fn complete_replaces_the_prefix_and_undoes_to_it() {
+        let mut b = typed("select a fr");
+        let (start, prefix) = b.completion_prefix().expect("prefix");
+        assert_eq!(prefix, "fr");
+        b.complete(start, "from");
+        assert_eq!(b.text(), "select a from");
+        assert_eq!(at(&b), (0, 13));
+        b.undo();
+        assert_eq!(b.text(), "select a fr");
     }
 
     #[test]

@@ -5,7 +5,7 @@
 # "none" to remove a default binding. Two actions on the same key in one scope
 # is a conflict, and the later one is refused.
 #
-# Scopes: global, editor, context, results, dialog.
+# Scopes: global, editor, context, results, completion, dialog.
 # The editor and global scopes cannot bind printable characters, because the
 # editor must always accept typing. Use Ctrl, Alt or function keys there.
 #
@@ -18,7 +18,8 @@
 # Actions: app.quit, focus.context, focus.editor, focus.results, focus.next,
 # focus.prev, view.toggle_context, view.toggle_results, help.toggle,
 # buffer.new, buffer.close, buffer.next, buffer.prev, buffer.reopen,
-# help.scroll_up, help.scroll_down, help.page_up, help.page_down, and the
+# completion.trigger, completion.accept, completion.dismiss, completion.next,
+# completion.prev, help.scroll_up, help.scroll_down, help.page_up, help.page_down, and the
 # editor.* actions used below. Text is typed into the editor by any printable
 # key that has no binding (Ctrl+C is unbound: copy is Alt+C or Ctrl+Insert).
 
@@ -85,6 +86,16 @@
 "ctrl+insert" = "editor.copy"
 "ctrl+v" = "editor.paste"
 "shift+insert" = "editor.paste"
+"ctrl+space" = "completion.trigger"
+"alt+/" = "completion.trigger"
+
+[completion]
+# Active only while the suggestion popup is open. Other keys keep typing.
+"enter" = "completion.accept"
+"tab" = "completion.accept"
+"esc" = "completion.dismiss"
+"down" = "completion.next"
+"up" = "completion.prev"
 
 [context]
 "?" = "help.toggle"

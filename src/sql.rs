@@ -167,6 +167,11 @@ const KEYWORDS: &[&str] = &[
     "WITH",
 ];
 
+/// All keywords, upper case and sorted.
+pub fn keywords() -> &'static [&'static str] {
+    KEYWORDS
+}
+
 fn is_keyword(word: &str) -> bool {
     if word.len() > 20 {
         return false;

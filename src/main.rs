@@ -1,4 +1,5 @@
 mod app;
+mod complete;
 mod config;
 mod diag;
 mod editor;

@@ -2,23 +2,23 @@
 │1                                                                             │
 │  ┌───────────────────────────────── Help ─────────────────────────────────┐  │
 │  │editor keys                                                             │  │
-│  │  Alt+C             copy                  editor.copy                   │  │
-└──│  Backspace         delete backward       editor.backspace              │──┘
-┌ C│  Ctrl+A            select all            editor.select_all             │──┐
-│Ob│  Ctrl+End          end of text           editor.move_buffer_end        │  │
+│  │  Alt+/             show suggestions      completion.trigger            │  │
+└──│  Alt+C             copy                  editor.copy                   │──┘
+┌ C│  Backspace         delete backward       editor.backspace              │──┐
+│Ob│  Ctrl+A            select all            editor.select_all             │  │
+│  │  Ctrl+End          end of text           editor.move_buffer_end        │  │
 │  │  Ctrl+Home         start of text         editor.move_buffer_start      │  │
 │  │  Ctrl+Insert       copy                  editor.copy                   │  │
 │  │  Ctrl+Left         word left             editor.move_word_left         │  │
-│  │  Ctrl+Right        word right            editor.move_word_right        │  │
-└──│  Ctrl+Shift+End    select to text end    editor.select_buffer_end      │──┘
-┌ R│  Ctrl+Shift+Home   select to text start  editor.select_buffer_start    │──┐
-│Qu│  Ctrl+Shift+Left   select word left      editor.select_word_left       │  │
+└──│  Ctrl+Right        word right            editor.move_word_right        │──┘
+┌ R│  Ctrl+Shift+End    select to text end    editor.select_buffer_end      │──┐
+│Qu│  Ctrl+Shift+Home   select to text start  editor.select_buffer_start    │  │
+│  │  Ctrl+Shift+Left   select word left      editor.select_word_left       │  │
 │  │  Ctrl+Shift+Right  select word right     editor.select_word_right      │  │
+│  │  Ctrl+Space        show suggestions      completion.trigger            │  │
 │  │  Ctrl+V            paste                 editor.paste                  │  │
 │  │  Ctrl+X            cut                   editor.cut                    │  │
 │  │  Ctrl+Y            redo                  editor.redo                   │  │
-│  │  Ctrl+Z            undo                  editor.undo                   │  │
-│  │  Delete            delete forward        editor.delete                 │  │
-└──└─────────────────── Up/Down scroll  ? close  (1/46) ────────────────────┘──┘
+└──└─────────────────── Up/Down scroll  ? close  (1/48) ────────────────────┘──┘
 F1 help  F6 next pane  Alt+2 focus editor  F3 toggle context strip  Ctrl+Q quit
  no connection │ focus: Editor │ Ln 1, Col 1

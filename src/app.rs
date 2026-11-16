@@ -3,8 +3,9 @@
 use crossterm::event::KeyCode;
 use ratatui::layout::Rect;
 
+use crate::complete::{self, Candidate, KeywordSource};
 use crate::config::Config;
-use crate::editor::{display_col, Buffer};
+use crate::editor::{display_col, Buffer, EditCmd, Pos};
 use crate::events::Event;
 use crate::keymap::{Action, KeyChord, Keymap, Scope};
 use crate::layout;
@@ -56,8 +57,18 @@ pub struct State {
     pub closed: Vec<Document>,
     /// Used to name new buffers.
     pub buffers_created: usize,
+    pub completion: Option<Completion>,
     /// Text from the last cut or copy. The system clipboard comes later (R14).
     pub register: String,
+}
+
+/// The open suggestion popup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completion {
+    /// Where the word being completed starts.
+    pub start: Pos,
+    pub items: Vec<Candidate>,
+    pub selected: usize,
 }
 
 /// One editor buffer with its view position.
@@ -111,6 +122,7 @@ impl State {
             active: 0,
             closed: Vec::new(),
             buffers_created: 1,
+            completion: None,
             register: String::new(),
         }
     }
@@ -173,9 +185,15 @@ impl App {
             }
             return;
         }
-        // The focused pane's scope wins over global. A pane-scoped key never
-        // fires in another pane (R4.8). With tab-indent off, Tab skips the
-        // editor scope and reaches the global focus binding (R4.6).
+        // The suggestion popup sees keys first, then the focused pane's scope,
+        // then global. A pane-scoped key never fires in another pane (R4.8).
+        // With tab-indent off, Tab skips the editor scope and reaches the
+        // global focus binding (R4.6).
+        let popup_action = if st.completion.is_some() {
+            self.keymap.lookup(Scope::Completion, chord)
+        } else {
+            None
+        };
         let editor_ignores_tab = st.focus == Pane::Editor
             && !self.config.editor.tab_indent
             && matches!(chord.code, KeyCode::Tab | KeyCode::BackTab);
@@ -184,19 +202,74 @@ impl App {
         } else {
             self.keymap.lookup(st.focus.scope(), chord)
         };
-        let action = pane_action.or_else(|| self.keymap.lookup(Scope::Global, chord));
+        let action = popup_action
+            .or(pane_action)
+            .or_else(|| self.keymap.lookup(Scope::Global, chord));
 
         match action {
-            Some(action) => self.perform(action),
+            Some(action) => {
+                self.perform(action);
+                // Deleting text keeps suggestions in step with the word.
+                let edits_text =
+                    matches!(action, Action::Edit(EditCmd::Backspace | EditCmd::Delete));
+                if edits_text {
+                    self.refresh_completion(false);
+                } else if !action.is_completion() {
+                    self.state.completion = None;
+                }
+            }
             // R4.3: in the editor, any printable key without a binding types.
             None if st.focus == Pane::Editor && chord.is_printable() => {
                 if let KeyCode::Char(c) = chord.code {
                     let opts = self.config.editor.options();
                     self.state.notice = None;
                     self.state.editor_mut().insert_char(c, &opts);
+                    self.refresh_completion(false);
                 }
             }
             None => {}
+        }
+    }
+
+    /// Recomputes the suggestions for the word at the cursor. `force` is for
+    /// the explicit trigger: it ignores the settings for automatic popups.
+    fn refresh_completion(&mut self, force: bool) {
+        self.state.completion = None;
+        let editor = &self.config.editor;
+        if !force && !editor.completion {
+            return;
+        }
+        let Some((start, prefix)) = self.state.editor().completion_prefix() else {
+            return;
+        };
+        if !force && prefix.chars().count() < editor.completion_min_chars {
+            return;
+        }
+        let items = complete::complete(&[&KeywordSource], &prefix);
+        if !items.is_empty() {
+            self.state.completion = Some(Completion {
+                start,
+                items,
+                selected: 0,
+            });
+        }
+    }
+
+    fn accept_completion(&mut self) {
+        let Some(completion) = self.state.completion.take() else {
+            return;
+        };
+        if let Some(item) = completion.items.get(completion.selected) {
+            self.state
+                .editor_mut()
+                .complete(completion.start, &item.text);
+        }
+    }
+
+    fn move_completion(&mut self, step: isize) {
+        if let Some(c) = &mut self.state.completion {
+            let len = c.items.len() as isize;
+            c.selected = (c.selected as isize + step).rem_euclid(len) as usize;
         }
     }
 
@@ -207,6 +280,7 @@ impl App {
         }
         let opts = self.config.editor.options();
         self.state.notice = None;
+        self.state.completion = None;
         self.state.editor_mut().insert_str(text, &opts);
     }
 
@@ -215,9 +289,28 @@ impl App {
         self.state.focus == Pane::Editor && self.config.editor.tab_indent
     }
 
+    /// The actions the hint bar advertises, most useful first.
+    pub fn hint_actions(&self) -> &'static [Action] {
+        if self.state.completion.is_some() {
+            &[
+                Action::CompletionAccept,
+                Action::CompletionNext,
+                Action::CompletionDismiss,
+            ]
+        } else {
+            &[
+                Action::HelpToggle,
+                Action::FocusNext,
+                Action::FocusEditor,
+                Action::ToggleContext,
+                Action::AppQuit,
+            ]
+        }
+    }
+
     /// The key to show for `action` in the focused pane, for hints.
     pub fn hint_key(&self, action: Action) -> Option<KeyChord> {
-        let scopes = [self.state.focus.scope(), Scope::Global];
+        let scopes = [Scope::Completion, self.state.focus.scope(), Scope::Global];
         let owns_tab = self.editor_owns_tab();
         self.keymap.key_for(action, &scopes, |k| {
             !(owns_tab && matches!(k.code, KeyCode::Tab | KeyCode::BackTab))
@@ -392,6 +485,11 @@ impl App {
             Action::HelpScrollDown => self.scroll_help(false, false),
             Action::HelpPageUp => self.scroll_help(true, true),
             Action::HelpPageDown => self.scroll_help(false, true),
+            Action::CompletionTrigger => self.refresh_completion(true),
+            Action::CompletionAccept => self.accept_completion(),
+            Action::CompletionDismiss => self.state.completion = None,
+            Action::CompletionNext => self.move_completion(1),
+            Action::CompletionPrev => self.move_completion(-1),
             Action::BufferNew => self.new_buffer(),
             Action::BufferClose => self.close_buffer(),
             Action::BufferNext => self.switch_buffer(1),
@@ -844,6 +942,226 @@ mod tests {
         ctrl(&mut a, 'n');
         ctrl(&mut a, 'v');
         assert_eq!(a.state.editor().text(), "shared");
+    }
+
+    fn items(app: &App) -> Vec<String> {
+        app.state
+            .completion
+            .as_ref()
+            .map(|c| c.items.iter().map(|i| i.text.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    fn enter(app: &mut App) {
+        press(app, KeyCode::Enter, KeyModifiers::NONE);
+    }
+
+    fn esc(app: &mut App) {
+        press(app, KeyCode::Esc, KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn suggestions_appear_after_the_minimum_number_of_characters() {
+        let mut a = app();
+        type_text(&mut a, "s");
+        assert!(a.state.completion.is_none());
+        type_text(&mut a, "e");
+        assert_eq!(items(&a)[..2], ["set", "select"]);
+    }
+
+    #[test]
+    fn enter_accepts_the_highlighted_suggestion_without_a_newline() {
+        let mut a = app();
+        type_text(&mut a, "sel");
+        assert_eq!(items(&a), ["select"]);
+        enter(&mut a);
+        assert_eq!(a.state.editor().text(), "select");
+        assert!(a.state.completion.is_none());
+        assert_eq!(a.state.editor().cursor().col, 6);
+    }
+
+    #[test]
+    fn enter_without_a_popup_inserts_a_newline() {
+        let mut a = app();
+        type_text(&mut a, "x");
+        enter(&mut a);
+        assert_eq!(a.state.editor().text(), "x\n");
+    }
+
+    #[test]
+    fn escape_dismisses_without_changing_the_buffer() {
+        let mut a = app();
+        type_text(&mut a, "sel");
+        esc(&mut a);
+        assert!(a.state.completion.is_none());
+        assert_eq!(a.state.editor().text(), "sel");
+        enter(&mut a);
+        assert_eq!(a.state.editor().text(), "sel\n", "Enter is a newline again");
+    }
+
+    #[test]
+    fn tab_also_accepts() {
+        let mut a = app();
+        type_text(&mut a, "sel");
+        press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(a.state.editor().text(), "select");
+    }
+
+    #[test]
+    fn arrows_choose_a_suggestion_and_wrap() {
+        let mut a = app();
+        type_text(&mut a, "de");
+        assert_eq!(items(&a), ["desc", "delete", "declare", "default"]);
+        press(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        enter(&mut a);
+        assert_eq!(a.state.editor().text(), "delete");
+
+        let mut a = app();
+        type_text(&mut a, "de");
+        press(&mut a, KeyCode::Up, KeyModifiers::NONE);
+        enter(&mut a);
+        assert_eq!(
+            a.state.editor().text(),
+            "default",
+            "Up from the first wraps to the last"
+        );
+    }
+
+    #[test]
+    fn capitals_give_capital_keywords() {
+        let mut a = app();
+        type_text(&mut a, "SEL");
+        enter(&mut a);
+        assert_eq!(a.state.editor().text(), "SELECT");
+    }
+
+    #[test]
+    fn typing_on_filters_and_backspace_widens() {
+        let mut a = app();
+        type_text(&mut a, "de");
+        assert_eq!(items(&a).len(), 4);
+        type_text(&mut a, "l");
+        assert_eq!(items(&a), ["delete"]);
+        press(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(items(&a).len(), 4);
+        press(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
+        assert!(a.state.completion.is_none(), "below the minimum again");
+    }
+
+    #[test]
+    fn a_fully_typed_keyword_closes_the_popup() {
+        let mut a = app();
+        type_text(&mut a, "select");
+        assert!(a.state.completion.is_none());
+    }
+
+    #[test]
+    fn moving_or_leaving_closes_the_popup_and_keys_do_not_act_twice() {
+        let mut a = app();
+        type_text(&mut a, "sel");
+        press(&mut a, KeyCode::Left, KeyModifiers::NONE);
+        assert!(a.state.completion.is_none());
+        assert_eq!(
+            a.state.editor().cursor().col,
+            2,
+            "the arrow also moved the cursor"
+        );
+
+        let mut a = app();
+        type_text(&mut a, "sel");
+        alt(&mut a, '3');
+        assert!(a.state.completion.is_none());
+
+        let mut a = app();
+        type_text(&mut a, "sel");
+        ctrl(&mut a, 'n');
+        assert!(a.state.completion.is_none());
+    }
+
+    #[test]
+    fn no_suggestions_in_strings_comments_or_after_a_dot() {
+        for text in ["'sel", "-- sel", "t.sel", "12"] {
+            let mut a = app();
+            // Paste so that auto-pairing does not change the text.
+            a.update(Event::Paste(text.to_string()));
+            type_text(&mut a, "e");
+            assert!(a.state.completion.is_none(), "{text}");
+        }
+    }
+
+    #[test]
+    fn paste_closes_the_popup() {
+        let mut a = app();
+        type_text(&mut a, "sel");
+        a.update(Event::Paste("x".to_string()));
+        assert!(a.state.completion.is_none());
+    }
+
+    #[test]
+    fn the_popup_can_be_switched_off_and_triggered_by_hand() {
+        let mut config = Config::default();
+        config.editor.completion = false;
+        let mut a = app_with(config);
+        type_text(&mut a, "sel");
+        assert!(a.state.completion.is_none());
+        press(&mut a, KeyCode::Char(' '), KeyModifiers::CONTROL);
+        assert_eq!(items(&a), ["select"]);
+        enter(&mut a);
+        assert_eq!(a.state.editor().text(), "select");
+    }
+
+    #[test]
+    fn manual_trigger_works_with_a_single_character() {
+        let mut a = app();
+        type_text(&mut a, "w");
+        assert!(a.state.completion.is_none());
+        alt(&mut a, '/');
+        assert!(items(&a).contains(&"where".to_string()));
+    }
+
+    #[test]
+    fn minimum_characters_is_configurable() {
+        let mut config = Config::default();
+        config.editor.completion_min_chars = 1;
+        let mut a = app_with(config);
+        type_text(&mut a, "w");
+        assert!(a.state.completion.is_some());
+    }
+
+    #[test]
+    fn accepting_is_one_undo_step_back_to_the_prefix() {
+        let mut a = app();
+        type_text(&mut a, "sel");
+        enter(&mut a);
+        ctrl(&mut a, 'z');
+        assert_eq!(a.state.editor().text(), "sel");
+    }
+
+    #[test]
+    fn completion_keys_do_not_leak_into_normal_editing() {
+        let mut a = app();
+        type_text(&mut a, "x");
+        // No popup is open, so Up and Down move the cursor as usual.
+        press(&mut a, KeyCode::Up, KeyModifiers::NONE);
+        press(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        assert!(a.state.completion.is_none());
+        esc(&mut a);
+        assert_eq!(a.state.editor().text(), "x");
+    }
+
+    #[test]
+    fn the_hint_bar_offers_the_popup_keys_while_it_is_open() {
+        let mut a = app();
+        type_text(&mut a, "sel");
+        assert_eq!(
+            a.hint_key(Action::CompletionAccept)
+                .map(|k| k.to_string())
+                .as_deref(),
+            Some("Enter")
+        );
+        assert!(a.hint_actions().contains(&Action::CompletionDismiss));
+        esc(&mut a);
+        assert!(a.hint_actions().contains(&Action::HelpToggle));
     }
 
     #[test]
