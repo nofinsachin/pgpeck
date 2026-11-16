@@ -1,0 +1,48 @@
+# Oxpecker default keymap.
+#
+# Format: [scope] then "key" = "action.name". Your own keymap.toml is laid over
+# this file. A key you bind replaces the default for that key. Bind a key to
+# "none" to remove a default binding. Two actions on the same key in one scope
+# is a conflict, and the later one is refused.
+#
+# Scopes: global, editor, context, results, dialog.
+# The editor and global scopes cannot bind printable characters, because the
+# editor must always accept typing. Use Ctrl, Alt or function keys there.
+#
+# Key syntax: modifiers joined with "+", then a key: ctrl+q, alt+1, shift+tab,
+# f6, enter, esc, space, up, pageup, or a single character.
+#
+# Many terminals cannot send Ctrl+digit keys, so each focus action also has an
+# Alt+digit binding.
+#
+# Actions: app.quit, focus.context, focus.editor, focus.results, focus.next,
+# focus.prev, view.toggle_context, view.toggle_results, help.toggle
+
+[global]
+"ctrl+q" = "app.quit"
+"ctrl+1" = "focus.context"
+"alt+1" = "focus.context"
+"ctrl+2" = "focus.editor"
+"alt+2" = "focus.editor"
+"ctrl+3" = "focus.results"
+"alt+3" = "focus.results"
+"f6" = "focus.next"
+"shift+f6" = "focus.prev"
+"tab" = "focus.next"
+"shift+tab" = "focus.prev"
+"f3" = "view.toggle_context"
+"f4" = "view.toggle_results"
+"f1" = "help.toggle"
+
+[editor]
+
+[context]
+"?" = "help.toggle"
+
+[results]
+"?" = "help.toggle"
+
+[dialog]
+"esc" = "help.toggle"
+"f1" = "help.toggle"
+"?" = "help.toggle"

@@ -1,0 +1,11 @@
+# Dark theme. Colors are names (red, light-blue, ...) or #rrggbb values.
+# Focus, errors and NULL are never conveyed by color alone (R20.9).
+focus = "cyan"
+error = "light-red"
+null = "dark-gray"
+dimmed = "dark-gray"
+keyword = "light-blue"
+string = "green"
+status_prod = "red"
+status_fg = "black"
+status_bg = "gray"

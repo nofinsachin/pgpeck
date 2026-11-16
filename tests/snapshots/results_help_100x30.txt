@@ -1,0 +1,30 @@
+┌ Editor ──────────────────────────────────────────────────────────────────────────────────────────┐
+│SQL editor (phase 2)                                                                              │
+│                                                                                                  │
+│                                                                                                  │
+│                 ┌──────────────────────────── Help ────────────────────────────┐                 │
+│                 │results keys                                                  │                 │
+│                 │  ?           help                  help.toggle               │                 │
+│                 │                                                              │                 │
+│                 │global keys                                                   │                 │
+└─────────────────│  Alt+1       focus context         focus.context             │─────────────────┘
+┌ Context ────────│  Alt+2       focus editor          focus.editor              │─────────────────┐
+│Objects used by t│  Alt+3       focus results         focus.results             │                 │
+│                 │  Ctrl+1      focus context         focus.context             │                 │
+│                 │  Ctrl+2      focus editor          focus.editor              │                 │
+│                 │  Ctrl+3      focus results         focus.results             │                 │
+│                 │  Ctrl+Q      quit                  app.quit                  │                 │
+└─────────────────│  F1          help                  help.toggle               │─────────────────┘
+┌ ▶ Results ──────│  F3          toggle context strip  view.toggle_context       │─────────────────┐
+│Query results (ph│  F4          toggle results        view.toggle_results       │                 │
+│                 │  F6          next pane             focus.next                │                 │
+│                 │  Shift+F6    previous pane         focus.prev                │                 │
+│                 │  Shift+Tab   previous pane         focus.prev                │                 │
+│                 │  Tab         next pane             focus.next                │                 │
+│                 │                                                              │                 │
+│                 └──────────────────────────────────────────────────────────────┘                 │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+? help  F6 next pane  Alt+2 focus editor  F3 toggle context strip  Ctrl+Q quit
+ no connection │ focus: Results

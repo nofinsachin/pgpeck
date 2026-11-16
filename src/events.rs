@@ -1,0 +1,50 @@
+//! Input events. A dedicated thread reads the terminal and forwards events, so
+//! the UI task never blocks on input (and background tasks can share the
+//! channel later).
+
+use std::thread;
+use std::time::Duration;
+
+use crossterm::event::{self, Event as TermEvent, KeyEvent, KeyEventKind};
+use tokio::sync::mpsc::UnboundedSender;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    Key(KeyEvent),
+    Resize(u16, u16),
+}
+
+/// Starts the input thread. It stops when the receiver is dropped or the
+/// terminal can no longer be read.
+pub fn spawn_input(tx: UnboundedSender<Event>) {
+    thread::spawn(move || loop {
+        match event::poll(Duration::from_millis(100)) {
+            Ok(true) => {}
+            Ok(false) => {
+                if tx.is_closed() {
+                    return;
+                }
+                continue;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "terminal poll failed");
+                return;
+            }
+        }
+        let forwarded = match event::read() {
+            // Some terminals also report key releases. Only presses and repeats count.
+            Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => {
+                tx.send(Event::Key(key))
+            }
+            Ok(TermEvent::Resize(w, h)) => tx.send(Event::Resize(w, h)),
+            Ok(_) => Ok(()),
+            Err(e) => {
+                tracing::error!(error = %e, "terminal read failed");
+                return;
+            }
+        };
+        if forwarded.is_err() {
+            return;
+        }
+    });
+}
