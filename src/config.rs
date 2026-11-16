@@ -2,6 +2,7 @@
 //! options are reported and replaced by the default (R21.2).
 
 use crate::diag::{line_containing, line_of_offset, Diagnostic};
+use crate::secrets::Source;
 
 const FILE: &str = "config.toml";
 
@@ -9,6 +10,13 @@ const FILE: &str = "config.toml";
 pub struct Config {
     pub editor: EditorConfig,
     pub ui: UiConfig,
+    pub connections: ConnectionsConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionsConfig {
+    /// Where to look for a password, in order (R2.1).
+    pub password_sources: Vec<Source>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +57,9 @@ impl Default for Config {
                 completion: true,
                 completion_min_chars: 2,
             },
+            connections: ConnectionsConfig {
+                password_sources: Source::default_order(),
+            },
             ui: UiConfig {
                 theme: "dark".to_string(),
                 show_hint_bar: true,
@@ -72,6 +83,7 @@ const SCHEMA: &[(&str, &[&str])] = &[
         ],
     ),
     ("ui", &["theme", "show_hint_bar", "show_context_strip"]),
+    ("connections", &["password_sources"]),
 ];
 
 impl Config {
@@ -153,6 +165,9 @@ impl Config {
             }
             ("ui", "show_hint_bar") => self.ui.show_hint_bar = want_bool(value)?,
             ("ui", "show_context_strip") => self.ui.show_context_strip = want_bool(value)?,
+            ("connections", "password_sources") => {
+                self.connections.password_sources = parse_sources(value)?;
+            }
             ("ui", "theme") => {
                 self.ui.theme = value.as_str().ok_or("expected a string")?.to_string();
             }
@@ -160,6 +175,28 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// A list of source names, each used once.
+fn parse_sources(value: &toml::Value) -> Result<Vec<Source>, &'static str> {
+    let names = value
+        .as_array()
+        .ok_or("expected a list such as [\"keychain\", \"env\"]")?;
+    let mut sources = Vec::new();
+    for name in names {
+        let source = name
+            .as_str()
+            .and_then(Source::from_name)
+            .ok_or("each entry must be one of keychain, pgpass, env, prompt")?;
+        if sources.contains(&source) {
+            return Err("each source can be listed only once");
+        }
+        sources.push(source);
+    }
+    if sources.is_empty() {
+        return Err("the list cannot be empty");
+    }
+    Ok(sources)
 }
 
 #[cfg(test)]
@@ -213,6 +250,31 @@ mod tests {
         let (config, diags) = Config::parse("[editor]\nindent_width = 2\n");
         assert!(diags.is_empty());
         assert_eq!(config.editor.indent_width, 2);
+    }
+
+    #[test]
+    fn password_sources_are_read_in_order() {
+        let (config, diags) =
+            Config::parse("[connections]\npassword_sources = [\"env\", \"prompt\"]\n");
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(
+            config.connections.password_sources,
+            [Source::Env, Source::Prompt]
+        );
+    }
+
+    #[test]
+    fn bad_password_sources_keep_the_default() {
+        for bad in ["[\"vault\"]", "[]", "[\"env\", \"env\"]", "\"env\"", "[1]"] {
+            let (config, diags) =
+                Config::parse(&format!("[connections]\npassword_sources = {bad}\n"));
+            assert_eq!(
+                config.connections.password_sources,
+                Source::default_order(),
+                "{bad}"
+            );
+            assert_eq!(diags.len(), 1, "{bad}");
+        }
     }
 
     #[test]

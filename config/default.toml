@@ -28,3 +28,12 @@ theme = "dark"
 show_hint_bar = true
 # Show the context strip at startup. F3 toggles it.
 show_context_strip = true
+
+[connections]
+# Where to look for a database password, in order. Passwords are never stored
+# in this file or in connections.toml.
+#   keychain  the OS keychain
+#   pgpass    ~/.pgpass, or the file named by $PGPASSFILE (must be mode 0600)
+#   env       $PGPASSWORD, or the variable named by a profile's password_env
+#   prompt    ask in the interface
+password_sources = ["keychain", "pgpass", "env", "prompt"]

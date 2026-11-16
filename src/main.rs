@@ -8,6 +8,8 @@ mod keymap;
 mod layout;
 mod logging;
 mod paths;
+mod profile;
+mod secrets;
 mod sql;
 mod terminal;
 mod theme;
@@ -20,6 +22,7 @@ use crate::app::App;
 use crate::config::Config;
 use crate::diag::Diagnostic;
 use crate::keymap::Keymap;
+use crate::profile::Profiles;
 use crate::theme::Theme;
 
 const HELP: &str = "\
@@ -38,6 +41,7 @@ struct Settings {
     config: Config,
     keymap: Keymap,
     theme: Theme,
+    profiles: Profiles,
     problems: Vec<Diagnostic>,
 }
 
@@ -85,6 +89,19 @@ fn load_settings() -> Settings {
         None => Keymap::default_keymap(),
     };
 
+    let profiles = match dir.as_ref().map(|d| d.join(profile::FILE)) {
+        Some(path) => match read_optional(&path, &mut problems) {
+            Some(src) => {
+                let (profiles, diags) = Profiles::parse(&src);
+                problems.extend(diags);
+                problems.extend(profile::permission_problem(&path));
+                profiles
+            }
+            None => Profiles::default(),
+        },
+        None => Profiles::default(),
+    };
+
     let theme_file = format!("{}.toml", config.ui.theme);
     let user_theme = dir
         .as_ref()
@@ -110,6 +127,7 @@ fn load_settings() -> Settings {
         config,
         keymap,
         theme,
+        profiles,
         problems,
     }
 }
@@ -120,6 +138,7 @@ fn check_config() -> ExitCode {
         Some(dir) => println!("Configuration directory: {}", dir.display()),
         None => println!("Configuration directory: not found (HOME is not set). Using defaults"),
     }
+    println!("Connection profiles: {}", settings.profiles.len());
     if settings.problems.is_empty() {
         println!("Configuration is valid.");
         ExitCode::SUCCESS
@@ -137,6 +156,7 @@ async fn run(settings: Settings) -> std::io::Result<()> {
         config,
         keymap,
         theme,
+        profiles: _profiles,
         problems,
     } = settings;
 
