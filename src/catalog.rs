@@ -177,6 +177,25 @@ impl Catalog {
         self.objects.is_empty()
     }
 
+    /// The columns of one relation, in table order. Typing narrows them by name.
+    pub fn columns_of(&self, schema: &str, relation: &str, query: &str) -> Vec<&Object> {
+        let query = query.trim();
+        let mut found: Vec<(i64, &Object)> = self
+            .objects
+            .iter()
+            .filter(|o| {
+                o.kind == Kind::Column
+                    && o.schema == schema
+                    && o.parent.as_deref() == Some(relation)
+            })
+            .filter_map(|o| Some((fuzzy::score(query, &o.name)?, o)))
+            .collect();
+        if !query.is_empty() {
+            found.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        }
+        found.into_iter().map(|(_, o)| o).collect()
+    }
+
     /// Fuzzy matches, grouped by kind in `Kind::ORDER` and best first within a
     /// group. With nothing typed, columns are left out: there are too many to
     /// be a useful list.
@@ -299,6 +318,26 @@ mod tests {
         assert_eq!(columns[0].path(), "public.orders.order_id");
         let tables = c.search_kind("orders", Some(Kind::Table));
         assert!(tables.iter().all(|o| o.kind == Kind::Table));
+    }
+
+    #[test]
+    fn columns_of_one_relation_come_in_table_order_and_narrow_by_name() {
+        let mut c = catalog();
+        c.objects
+            .push(object(Kind::Column, "public", "total", Some("orders")));
+        c.objects
+            .push(object(Kind::Column, "archive", "id", Some("orders")));
+        c.objects
+            .push(object(Kind::Column, "public", "id", Some("other")));
+        let names: Vec<&str> = c
+            .columns_of("public", "orders", "")
+            .iter()
+            .map(|o| o.name.as_str())
+            .collect();
+        assert_eq!(names, ["order_id", "total"]);
+        let narrowed = c.columns_of("public", "orders", "tot");
+        assert_eq!(narrowed.len(), 1);
+        assert_eq!(narrowed[0].name, "total");
     }
 
     #[test]

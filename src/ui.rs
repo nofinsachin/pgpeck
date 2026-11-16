@@ -1332,9 +1332,10 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
     let popup = layout::centered(area, 90, area.height.saturating_sub(4).clamp(8, 22));
     frame.render_widget(Clear, popup);
     let block = Block::bordered()
-        .title(match find.kind {
-            Some(kind) => format!(" Find: {} only ", kind.plural().to_lowercase()),
-            None => " Find ".to_string(),
+        .title(match (&find.columns_of, find.kind) {
+            (Some((schema, relation)), _) => format!(" Find: columns of {schema}.{relation} "),
+            (None, Some(kind)) => format!(" Find: {} only ", kind.plural().to_lowercase()),
+            (None, None) => " Find ".to_string(),
         })
         .title_alignment(Alignment::Center)
         .border_style(Style::new().fg(theme.focus));
@@ -1422,6 +1423,7 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
             Some(c) if c.catalog.as_ref().is_some_and(|k| k.is_empty()) => {
                 "This database has no tables, views or functions you can see".to_string()
             }
+            _ if find.columns_of.is_some() => "No column matches".to_string(),
             _ => match find.kind {
                 Some(kind) => format!("No {} matches", kind.label()),
                 None => "Nothing matches".to_string(),
@@ -1442,8 +1444,20 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
             .key_for(a, &[Scope::Find], |_| true)
             .map_or(String::new(), |k| k.to_string())
     };
+    // The columns key is offered only where it works: on a table or view,
+    // or to leave a column list.
+    let selected_is_relation = items
+        .get(find.selected)
+        .is_some_and(|o| o.kind.is_relation());
+    let columns_hint = if find.columns_of.is_some() {
+        format!("  {} all objects", key(Action::FindColumns))
+    } else if selected_is_relation {
+        format!("  {} columns of this one", key(Action::FindColumns))
+    } else {
+        String::new()
+    };
     let footer = format!(
-        "{} insert name  {} select sample rows  {} close",
+        "{} insert name  {} select sample rows{columns_hint}  {} close",
         key(Action::DialogSubmit),
         key(Action::FindSample),
         key(Action::DialogCancel)
@@ -1451,6 +1465,7 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
     // The jump keys share a modifier by default, so it is shown once.
     let jumps: Vec<(String, &str)> = catalog::Kind::ORDER
         .iter()
+        .filter(|kind| **kind != catalog::Kind::Column)
         .filter_map(|kind| {
             let key = app
                 .keymap

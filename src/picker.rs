@@ -10,6 +10,8 @@ pub struct Picker {
     pub selected: usize,
     /// Find window only: list one kind of object.
     pub kind: Option<crate::catalog::Kind>,
+    /// Find window only: the schema and relation whose columns are listed.
+    pub columns_of: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

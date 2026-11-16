@@ -807,6 +807,7 @@ impl App {
             | Action::PickerEditProfile
             | Action::FindSample
             | Action::FindJump(_)
+            | Action::FindColumns
             | Action::FindRelations => {}
             Action::FindOpen => self.open_find(),
             Action::CompletionTrigger => self.refresh_completion(true),
@@ -861,8 +862,9 @@ impl App {
     ) -> Vec<&'a CatalogObject> {
         conn.and_then(|id| connections.iter().find(|c| c.id == id))
             .and_then(|c| c.catalog.as_ref())
-            .map_or_else(Vec::new, |catalog| {
-                catalog.search_kind(&find.input, find.kind)
+            .map_or_else(Vec::new, |catalog| match &find.columns_of {
+                Some((schema, relation)) => catalog.columns_of(schema, relation, &find.input),
+                None => catalog.search_kind(&find.input, find.kind),
             })
     }
 
@@ -1094,12 +1096,32 @@ impl App {
             }
             // Narrows the list to one kind. The same key again shows all.
             (Action::FindJump(kind), Some(Dialog::Find(p))) => {
+                p.columns_of = None;
                 p.kind = if p.kind == Some(kind) {
                     None
                 } else {
                     Some(kind)
                 };
                 p.selected = 0;
+            }
+            // Only offered on a table or view. Again: back to everything.
+            (Action::FindColumns, Some(Dialog::Find(p))) => {
+                if p.columns_of.take().is_some() {
+                    p.input.clear();
+                    p.selected = 0;
+                    return;
+                }
+                let conn = self.state.docs[self.state.active].connection;
+                let chosen = Self::find_results(&self.state.connections, conn, p)
+                    .get(p.selected)
+                    .filter(|o| o.kind.is_relation())
+                    .map(|o| (o.schema.clone(), o.name.clone()));
+                if let Some(target) = chosen {
+                    p.columns_of = Some(target);
+                    p.kind = None;
+                    p.input.clear();
+                    p.selected = 0;
+                }
             }
             (Action::FindRelations, Some(Dialog::Find(_))) => {
                 self.notice("The relationship view is not built yet");
@@ -4202,13 +4224,9 @@ mod tests {
             )
         };
         assert_eq!(shown(&a).0.len(), 3, "nothing typed: no columns");
-        alt(&mut a, 'c');
-        assert_eq!(
-            shown(&a).0,
-            [Kind::Column],
-            "columns appear with nothing typed"
-        );
-        alt(&mut a, 'c');
+        alt(&mut a, 'y');
+        assert!(shown(&a).0.is_empty(), "no types here");
+        alt(&mut a, 'y');
         assert_eq!(shown(&a).0.len(), 3, "the same key shows everything again");
         type_into(&mut a, "r");
         alt(&mut a, 'f');
@@ -4256,5 +4274,80 @@ mod tests {
             .notice
             .as_deref()
             .is_some_and(|n| n.contains("not built")));
+    }
+
+    #[test]
+    fn alt_c_lists_only_the_columns_of_the_selected_table() {
+        use crate::catalog::{Kind, Object};
+        let mut a = app();
+        let conn = connected(&mut a);
+        let mut catalog = sample_catalog();
+        for (schema, name, detail) in [("public", "total", "numeric"), ("archive", "old", "text")] {
+            catalog.objects.push(Object {
+                kind: Kind::Column,
+                schema: schema.to_string(),
+                name: name.to_string(),
+                parent: Some("orders".to_string()),
+                detail: detail.to_string(),
+            });
+        }
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(catalog),
+        }));
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "public.orders");
+        alt(&mut a, 'c');
+        let Some(Dialog::Find(f)) = &a.state.dialog else {
+            panic!("find")
+        };
+        assert_eq!(
+            f.columns_of,
+            Some(("public".to_string(), "orders".to_string()))
+        );
+        assert_eq!(f.input, "", "the search starts empty");
+        let names: Vec<String> = a.find_items(f).iter().map(|o| o.path()).collect();
+        assert_eq!(names, ["public.orders.id", "public.orders.total"]);
+        // Typing narrows the columns, and Enter inserts the one chosen.
+        type_into(&mut a, "tot");
+        press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(a.state.editor().text(), "public.orders.total");
+    }
+
+    #[test]
+    fn alt_c_does_nothing_unless_a_table_or_view_is_selected() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "refresh"); // a function
+        alt(&mut a, 'c');
+        let Some(Dialog::Find(f)) = &a.state.dialog else {
+            panic!("find")
+        };
+        assert!(f.columns_of.is_none());
+        assert_eq!(f.input, "refresh");
+    }
+
+    #[test]
+    fn alt_c_again_goes_back_to_everything() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "public.orders");
+        alt(&mut a, 'c');
+        alt(&mut a, 'c');
+        let Some(Dialog::Find(f)) = &a.state.dialog else {
+            panic!("find")
+        };
+        assert!(f.columns_of.is_none());
+        assert_eq!(a.find_items(f).len(), 3);
     }
 }

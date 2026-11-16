@@ -179,10 +179,11 @@
 "alt+v" = "find.jump_view"
 "alt+m" = "find.jump_materialized_view"
 "alt+o" = "find.jump_foreign_table"
-"alt+c" = "find.jump_column"
 "alt+f" = "find.jump_function"
 "alt+y" = "find.jump_type"
 "alt+n" = "find.jump_schema"
+# On a table or view: list only its columns. Again: back to everything.
+"alt+c" = "find.show_columns"
 # The relationship view is not built yet.
 "alt+z" = "find.open_relationships"
 
