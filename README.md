@@ -49,7 +49,9 @@ The keys, all shown on screen:
 | | `Esc` | back to the context pane |
 | | `Z` | roll back an open or failed transaction |
 | Any pane | `Ctrl+P` | find a schema object (the Find window) |
-| Find window | `Enter` | put the object's name in the editor |
+| Find window | `Enter` | put the object's name in the editor, as listed, and copy it |
+| | `Alt+T` `V` `M` `O` `C` `F` `Y` `N` | jump to tables, views, materialized views, foreign tables, columns, functions, types, schemas |
+| | `Alt+Z` | relationship view (not built yet) |
 | | `Alt+S` | on a table or view: add `SELECT * ... LIMIT 100` and run it |
 | | `Esc` | close, changing nothing |
 | Any pane | `Alt+Z` | roll back an open or failed transaction |

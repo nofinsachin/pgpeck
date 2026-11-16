@@ -41,6 +41,15 @@ impl Kind {
         }
     }
 
+    /// A word short enough for a key hint.
+    pub fn short(self) -> &'static str {
+        match self {
+            Kind::MaterializedView => "matview",
+            Kind::ForeignTable => "foreign",
+            other => other.label(),
+        }
+    }
+
     pub fn plural(self) -> &'static str {
         match self {
             Kind::Table => "Tables",

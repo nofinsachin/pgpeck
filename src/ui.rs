@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
+use crate::catalog;
 use crate::db::{DbError, ResultSet, SessionStats, TxState};
 use crate::editor::{cell_width, display_col, Pos};
 use crate::keymap::{Action, KeyChord, Scope};
@@ -1328,7 +1329,7 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
     let dim = Style::new().fg(theme.dimmed);
     let label = Style::new().fg(theme.label);
     let value = Style::new().fg(theme.value);
-    let popup = layout::centered(area, 84, area.height.saturating_sub(4).clamp(8, 22));
+    let popup = layout::centered(area, 90, area.height.saturating_sub(4).clamp(8, 22));
     frame.render_widget(Clear, popup);
     let block = Block::bordered()
         .title(" Find ")
@@ -1363,7 +1364,7 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
 
     let list = Rect {
         y: inner.y + 1,
-        height: inner.height.saturating_sub(2),
+        height: inner.height.saturating_sub(3),
         ..inner
     };
     let width = usize::from(list.width);
@@ -1441,12 +1442,44 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
         key(Action::FindSample),
         key(Action::DialogCancel)
     );
+    // The jump keys share a modifier by default, so it is shown once.
+    let jumps: Vec<(String, &str)> = catalog::Kind::ORDER
+        .iter()
+        .filter_map(|kind| {
+            let key = app
+                .keymap
+                .key_for(Action::FindJump(*kind), &[Scope::Find], |_| true)?;
+            Some((key.to_string(), kind.short()))
+        })
+        .collect();
+    let prefix = jumps
+        .first()
+        .and_then(|(k, _)| k.rsplit_once('+'))
+        .map(|(p, _)| format!("{p}+"))
+        .filter(|p| jumps.iter().all(|(k, _)| k.starts_with(p.as_str())));
+    let mut jump_line = String::from("Jump: ");
+    for (n, (key, label)) in jumps.iter().enumerate() {
+        let shown = match (&prefix, n) {
+            (Some(p), 1..) => key.strip_prefix(p.as_str()).unwrap_or(key),
+            _ => key,
+        };
+        if n > 0 {
+            jump_line.push_str("  ");
+        }
+        jump_line.push_str(&format!("{shown} {label}"));
+    }
     let footer_area = Rect {
-        y: inner.y + inner.height - 1,
-        height: 1,
+        y: inner.y + inner.height - 2,
+        height: 2,
         ..inner
     };
-    frame.render_widget(Paragraph::new(Line::styled(footer, dim)), footer_area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(footer, dim),
+            Line::styled(jump_line, dim),
+        ]),
+        footer_area,
+    );
 }
 
 fn draw_form(
@@ -2569,5 +2602,62 @@ mod tests {
     #[test]
     fn default_theme_uses_real_colors() {
         assert_ne!(Theme::default().keyword, Color::Reset);
+    }
+
+    #[test]
+    fn the_find_window_groups_results_and_shows_the_jump_keys() {
+        use crate::catalog::{Catalog, Kind, Object};
+        let mut a = connected_app(90, 24);
+        let object = |kind, schema: &str, name: &str, parent: Option<&str>, detail: &str| Object {
+            kind,
+            schema: schema.to_string(),
+            name: name.to_string(),
+            parent: parent.map(str::to_string),
+            detail: detail.to_string(),
+        };
+        let conn = a.state.connections[0].id;
+        a.update(Event::Background(crate::events::Background::Catalog {
+            conn,
+            result: Ok(Catalog {
+                objects: vec![
+                    object(Kind::Table, "public", "orders", None, ""),
+                    object(Kind::Table, "archive", "orders", None, ""),
+                    object(Kind::View, "public", "order_totals", None, ""),
+                    object(
+                        Kind::Column,
+                        "public",
+                        "order_id",
+                        Some("orders"),
+                        "integer",
+                    ),
+                    object(
+                        Kind::Function,
+                        "public",
+                        "refresh_orders",
+                        None,
+                        "since date",
+                    ),
+                ],
+            }),
+        }));
+        key(&mut a, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        type_text(&mut a, "order");
+        let out = render(&a, 90, 24);
+        for expected in [
+            "Find",
+            "> order",
+            "Tables",
+            "archive.orders",
+            "Views",
+            "Columns",
+            "public.orders.order_id",
+            "Functions",
+            "(since date)",
+            "Enter insert name",
+            "Jump: Alt+T table  V view",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert_snapshot("find_90x24", &out);
     }
 }

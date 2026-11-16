@@ -805,7 +805,9 @@ impl App {
             | Action::DialogClear
             | Action::PickerSaveProfile
             | Action::PickerEditProfile
-            | Action::FindSample => {}
+            | Action::FindSample
+            | Action::FindJump(_)
+            | Action::FindRelations => {}
             Action::FindOpen => self.open_find(),
             Action::CompletionTrigger => self.refresh_completion(true),
             Action::CompletionAccept => self.accept_completion(),
@@ -917,6 +919,9 @@ impl App {
         let Some(object) = items.get(find.selected).copied() else {
             return;
         };
+        // Enter takes the name as the list shows it. A sample query needs a
+        // name that is valid SQL, so it is quoted.
+        let shown = object.path();
         let name = object.sql_name();
         let relation = object.kind.is_relation();
         if sample && !relation {
@@ -935,7 +940,8 @@ impl App {
             editor.insert_str(&statement, &opts);
             self.run_statement();
         } else {
-            self.state.editor_mut().insert_str(&name, &opts);
+            self.state.editor_mut().insert_str(&shown, &opts);
+            self.state.register = shown;
         }
     }
 
@@ -1083,6 +1089,20 @@ impl App {
                 )
                 .len();
                 p.select_previous(count);
+            }
+            (Action::FindJump(kind), Some(Dialog::Find(p))) => {
+                let conn = self.state.docs[self.state.active].connection;
+                let items = Self::find_results(&self.state.connections, conn, &p.input);
+                match items.iter().position(|o| o.kind == kind) {
+                    Some(index) => p.selected = index,
+                    None => {
+                        let text = format!("No {} in the results", kind.label());
+                        self.state.notice = Some(text);
+                    }
+                }
+            }
+            (Action::FindRelations, Some(Dialog::Find(_))) => {
+                self.notice("The relationship view is not built yet");
             }
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
             (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
@@ -4091,6 +4111,7 @@ mod tests {
         press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
         assert!(a.state.dialog.is_none());
         assert_eq!(a.state.editor().text(), "select * from archive.orders");
+        assert_eq!(a.state.register, "archive.orders", "also copied");
     }
 
     #[test]
@@ -4151,5 +4172,72 @@ mod tests {
             output: output(vec![set], None),
         }));
         assert!(a.state.connection(conn).is_some_and(|c| c.catalog_busy));
+    }
+
+    #[test]
+    fn alt_letters_jump_to_the_first_result_of_a_kind() {
+        use crate::catalog::Kind;
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "r");
+        let kind_at = |a: &App| {
+            let Some(Dialog::Find(f)) = &a.state.dialog else {
+                panic!("find")
+            };
+            a.find_items(&f.input)[f.selected].kind
+        };
+        assert_eq!(kind_at(&a), Kind::Table);
+        alt(&mut a, 'f');
+        assert_eq!(kind_at(&a), Kind::Function);
+        alt(&mut a, 't');
+        assert_eq!(kind_at(&a), Kind::Table);
+        let Some(Dialog::Find(f)) = &a.state.dialog else {
+            panic!("find")
+        };
+        assert_eq!(f.input, "r", "jump keys never type into the search");
+    }
+
+    #[test]
+    fn a_jump_to_a_kind_with_no_results_says_so_and_stays_put() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        alt(&mut a, 'v');
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("No view")));
+        let Some(Dialog::Find(f)) = &a.state.dialog else {
+            panic!("find")
+        };
+        assert_eq!(f.selected, 0);
+    }
+
+    #[test]
+    fn alt_z_in_find_is_reserved_for_the_relationship_view() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        alt(&mut a, 'z');
+        assert!(matches!(a.state.dialog, Some(Dialog::Find(_))));
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("not built")));
     }
 }

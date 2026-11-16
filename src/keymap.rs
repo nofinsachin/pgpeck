@@ -7,6 +7,7 @@ use std::fmt;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::catalog::Kind;
 use crate::diag::{line_containing, line_of_offset, Diagnostic};
 use crate::editor::{EditCmd, Motion};
 
@@ -64,6 +65,9 @@ pub enum Action {
     PickerEditProfile,
     FindOpen,
     FindSample,
+    /// Moves the selection to the first result of a kind.
+    FindJump(Kind),
+    FindRelations,
     SessionEditDatabase,
     SessionEditUser,
     TransactionRollback,
@@ -121,6 +125,21 @@ const ACTIONS: &[(&str, Action)] = &[
     ("picker.edit_profile", Action::PickerEditProfile),
     ("find.open", Action::FindOpen),
     ("find.sample_rows", Action::FindSample),
+    ("find.jump_table", Action::FindJump(Kind::Table)),
+    ("find.jump_view", Action::FindJump(Kind::View)),
+    (
+        "find.jump_materialized_view",
+        Action::FindJump(Kind::MaterializedView),
+    ),
+    (
+        "find.jump_foreign_table",
+        Action::FindJump(Kind::ForeignTable),
+    ),
+    ("find.jump_column", Action::FindJump(Kind::Column)),
+    ("find.jump_function", Action::FindJump(Kind::Function)),
+    ("find.jump_type", Action::FindJump(Kind::Type)),
+    ("find.jump_schema", Action::FindJump(Kind::Schema)),
+    ("find.open_relationships", Action::FindRelations),
     ("session.edit_database", Action::SessionEditDatabase),
     ("session.edit_user", Action::SessionEditUser),
     ("transaction.rollback", Action::TransactionRollback),
@@ -308,6 +327,17 @@ impl Action {
             Action::PickerEditProfile => "edit connection",
             Action::FindOpen => "find",
             Action::FindSample => "select sample rows",
+            Action::FindJump(kind) => match kind {
+                Kind::Table => "jump to tables",
+                Kind::View => "jump to views",
+                Kind::MaterializedView => "jump to materialized views",
+                Kind::ForeignTable => "jump to foreign tables",
+                Kind::Column => "jump to columns",
+                Kind::Function => "jump to functions",
+                Kind::Type => "jump to types",
+                Kind::Schema => "jump to schemas",
+            },
+            Action::FindRelations => "relationships",
             Action::SessionEditDatabase => "change database",
             Action::SessionEditUser => "change user",
             Action::TransactionRollback => "roll back",
