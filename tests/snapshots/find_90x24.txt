@@ -18,7 +18,7 @@
 │                                                                                        │
 │                                                                                        │
 │Enter insert name  Alt+S select sample rows  Esc close                                  │
-│Jump: Alt+T table  V view  M matview  O foreign  C column  F function  Y type  N schema │
+│Only: Alt+T table  V view  M matview  O foreign  C column  F function  Y type  N schema │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 Ctrl+R run  Esc commands  Ctrl+O connect
  (uri) │ app │ alice │ no TLS │ focus: Editor │ Ln 1, Col 1

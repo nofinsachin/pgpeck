@@ -8,6 +8,8 @@ use crate::profile::{Profile, Profiles};
 pub struct Picker {
     pub input: String,
     pub selected: usize,
+    /// Find window only: list one kind of object.
+    pub kind: Option<crate::catalog::Kind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

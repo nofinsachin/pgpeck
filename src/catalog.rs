@@ -169,6 +169,8 @@ pub fn object_from_row(row: [&str; 5]) -> Option<Object> {
 
 /// How many results one group shows.
 pub const PER_KIND: usize = 25;
+/// How many results show when the list is narrowed to one kind.
+pub const PER_KIND_NARROWED: usize = 200;
 
 impl Catalog {
     pub fn is_empty(&self) -> bool {
@@ -179,10 +181,25 @@ impl Catalog {
     /// group. With nothing typed, columns are left out: there are too many to
     /// be a useful list.
     pub fn search(&self, query: &str) -> Vec<&Object> {
+        self.search_kind(query, None)
+    }
+
+    /// Like `search`, limited to one kind when `only` is given. A narrowed
+    /// list is allowed to show columns even with nothing typed, since the
+    /// user asked for them.
+    pub fn search_kind(&self, query: &str, only: Option<Kind>) -> Vec<&Object> {
         let query = query.trim();
+        let cap = if only.is_some() {
+            PER_KIND_NARROWED
+        } else {
+            PER_KIND
+        };
         let mut groups: Vec<Vec<(i64, &Object)>> = vec![Vec::new(); Kind::ORDER.len()];
         for object in &self.objects {
-            if query.is_empty() && object.kind == Kind::Column {
+            if only.is_some_and(|k| k != object.kind) {
+                continue;
+            }
+            if query.is_empty() && object.kind == Kind::Column && only.is_none() {
                 continue;
             }
             let score = object
@@ -198,7 +215,7 @@ impl Catalog {
         let mut found = Vec::new();
         for mut group in groups {
             group.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path().cmp(&b.1.path())));
-            found.extend(group.into_iter().take(PER_KIND).map(|(_, o)| o));
+            found.extend(group.into_iter().take(cap).map(|(_, o)| o));
         }
         found
     }
@@ -272,6 +289,16 @@ mod tests {
         let found = c.search("");
         assert_eq!(found.len(), 5);
         assert!(found.iter().all(|o| o.kind != Kind::Column));
+    }
+
+    #[test]
+    fn narrowing_to_a_kind_lists_its_objects_even_with_nothing_typed() {
+        let c = catalog();
+        let columns = c.search_kind("", Some(Kind::Column));
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].path(), "public.orders.order_id");
+        let tables = c.search_kind("orders", Some(Kind::Table));
+        assert!(tables.iter().all(|o| o.kind == Kind::Table));
     }
 
     #[test]

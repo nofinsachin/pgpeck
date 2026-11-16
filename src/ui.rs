@@ -1332,7 +1332,10 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
     let popup = layout::centered(area, 90, area.height.saturating_sub(4).clamp(8, 22));
     frame.render_widget(Clear, popup);
     let block = Block::bordered()
-        .title(" Find ")
+        .title(match find.kind {
+            Some(kind) => format!(" Find: {} only ", kind.plural().to_lowercase()),
+            None => " Find ".to_string(),
+        })
         .title_alignment(Alignment::Center)
         .border_style(Style::new().fg(theme.focus));
     let inner = block.inner(popup);
@@ -1373,7 +1376,7 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
         .doc()
         .connection
         .and_then(|id| app.state.connection(id));
-    let items = app.find_items(&find.input);
+    let items = app.find_items(find);
 
     // Group headings are lines of their own. Remember which line holds the
     // selected item so it stays in view.
@@ -1419,7 +1422,10 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
             Some(c) if c.catalog.as_ref().is_some_and(|k| k.is_empty()) => {
                 "This database has no tables, views or functions you can see".to_string()
             }
-            _ => "Nothing matches".to_string(),
+            _ => match find.kind {
+                Some(kind) => format!("No {} matches", kind.label()),
+                None => "Nothing matches".to_string(),
+            },
         };
         lines.push(Line::styled(message, dim));
     }
@@ -1457,7 +1463,7 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
         .and_then(|(k, _)| k.rsplit_once('+'))
         .map(|(p, _)| format!("{p}+"))
         .filter(|p| jumps.iter().all(|(k, _)| k.starts_with(p.as_str())));
-    let mut jump_line = String::from("Jump: ");
+    let mut jump_line = String::from("Only: ");
     for (n, (key, label)) in jumps.iter().enumerate() {
         let shown = match (&prefix, n) {
             (Some(p), 1..) => key.strip_prefix(p.as_str()).unwrap_or(key),
@@ -2654,7 +2660,7 @@ mod tests {
             "Functions",
             "(since date)",
             "Enter insert name",
-            "Jump: Alt+T table  V view",
+            "Only: Alt+T table  V view",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }

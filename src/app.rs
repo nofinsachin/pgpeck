@@ -857,16 +857,18 @@ impl App {
     fn find_results<'a>(
         connections: &'a [Connection],
         conn: Option<ConnId>,
-        input: &str,
+        find: &Picker,
     ) -> Vec<&'a CatalogObject> {
         conn.and_then(|id| connections.iter().find(|c| c.id == id))
             .and_then(|c| c.catalog.as_ref())
-            .map_or_else(Vec::new, |catalog| catalog.search(input))
+            .map_or_else(Vec::new, |catalog| {
+                catalog.search_kind(&find.input, find.kind)
+            })
     }
 
     /// The objects the overlay lists now, for drawing.
-    pub fn find_items(&self, input: &str) -> Vec<&CatalogObject> {
-        Self::find_results(&self.state.connections, self.state.doc().connection, input)
+    pub fn find_items(&self, find: &Picker) -> Vec<&CatalogObject> {
+        Self::find_results(&self.state.connections, self.state.doc().connection, find)
     }
 
     /// Asks for the schema metadata. Same conditions as the statistics read:
@@ -915,7 +917,7 @@ impl App {
         let Some(Dialog::Find(find)) = &self.state.dialog else {
             return;
         };
-        let items = self.find_items(&find.input);
+        let items = self.find_items(find);
         let Some(object) = items.get(find.selected).copied() else {
             return;
         };
@@ -1076,7 +1078,7 @@ impl App {
                 let count = Self::find_results(
                     &self.state.connections,
                     self.state.docs[self.state.active].connection,
-                    &p.input,
+                    p,
                 )
                 .len();
                 p.select_next(count);
@@ -1085,21 +1087,19 @@ impl App {
                 let count = Self::find_results(
                     &self.state.connections,
                     self.state.docs[self.state.active].connection,
-                    &p.input,
+                    p,
                 )
                 .len();
                 p.select_previous(count);
             }
+            // Narrows the list to one kind. The same key again shows all.
             (Action::FindJump(kind), Some(Dialog::Find(p))) => {
-                let conn = self.state.docs[self.state.active].connection;
-                let items = Self::find_results(&self.state.connections, conn, &p.input);
-                match items.iter().position(|o| o.kind == kind) {
-                    Some(index) => p.selected = index,
-                    None => {
-                        let text = format!("No {} in the results", kind.label());
-                        self.state.notice = Some(text);
-                    }
-                }
+                p.kind = if p.kind == Some(kind) {
+                    None
+                } else {
+                    Some(kind)
+                };
+                p.selected = 0;
             }
             (Action::FindRelations, Some(Dialog::Find(_))) => {
                 self.notice("The relationship view is not built yet");
@@ -4055,14 +4055,22 @@ mod tests {
         assert!(a.state.connection(conn).is_some_and(|c| c.catalog_busy));
         ctrl(&mut a, 'p');
         assert!(matches!(a.state.dialog, Some(Dialog::Find(_))));
-        assert!(a.find_items("").is_empty(), "still reading");
+        assert!(a.find_items(&Picker::default()).is_empty(), "still reading");
         a.update(Event::Background(Background::Catalog {
             conn,
             result: Ok(sample_catalog()),
         }));
         assert!(a.state.connection(conn).is_some_and(|c| !c.catalog_busy));
-        assert_eq!(a.find_items("").len(), 3, "columns wait for a query");
-        assert_eq!(a.find_items("orders.id").len(), 1);
+        let typed = |text: &str| Picker {
+            input: text.to_string(),
+            ..Picker::default()
+        };
+        assert_eq!(
+            a.find_items(&typed("")).len(),
+            3,
+            "columns wait for a query"
+        );
+        assert_eq!(a.find_items(&typed("orders.id")).len(), 1);
     }
 
     #[test]
@@ -4175,7 +4183,7 @@ mod tests {
     }
 
     #[test]
-    fn alt_letters_jump_to_the_first_result_of_a_kind() {
+    fn alt_letters_narrow_the_list_to_a_kind_and_the_same_key_shows_all() {
         use crate::catalog::Kind;
         let mut a = app();
         let conn = connected(&mut a);
@@ -4184,26 +4192,35 @@ mod tests {
             result: Ok(sample_catalog()),
         }));
         ctrl(&mut a, 'p');
-        type_into(&mut a, "r");
-        let kind_at = |a: &App| {
+        let shown = |a: &App| {
             let Some(Dialog::Find(f)) = &a.state.dialog else {
                 panic!("find")
             };
-            a.find_items(&f.input)[f.selected].kind
+            (
+                a.find_items(f).iter().map(|o| o.kind).collect::<Vec<_>>(),
+                f.input.clone(),
+            )
         };
-        assert_eq!(kind_at(&a), Kind::Table);
+        assert_eq!(shown(&a).0.len(), 3, "nothing typed: no columns");
+        alt(&mut a, 'c');
+        assert_eq!(
+            shown(&a).0,
+            [Kind::Column],
+            "columns appear with nothing typed"
+        );
+        alt(&mut a, 'c');
+        assert_eq!(shown(&a).0.len(), 3, "the same key shows everything again");
+        type_into(&mut a, "r");
         alt(&mut a, 'f');
-        assert_eq!(kind_at(&a), Kind::Function);
+        let (kinds, input) = shown(&a);
+        assert_eq!(kinds, [Kind::Function]);
+        assert_eq!(input, "r", "narrowing never types into the search");
         alt(&mut a, 't');
-        assert_eq!(kind_at(&a), Kind::Table);
-        let Some(Dialog::Find(f)) = &a.state.dialog else {
-            panic!("find")
-        };
-        assert_eq!(f.input, "r", "jump keys never type into the search");
+        assert!(shown(&a).0.iter().all(|k| *k == Kind::Table));
     }
 
     #[test]
-    fn a_jump_to_a_kind_with_no_results_says_so_and_stays_put() {
+    fn narrowing_to_a_kind_with_no_objects_shows_an_empty_list() {
         let mut a = app();
         let conn = connected(&mut a);
         a.update(Event::Background(Background::Catalog {
@@ -4212,15 +4229,15 @@ mod tests {
         }));
         ctrl(&mut a, 'p');
         alt(&mut a, 'v');
-        assert!(a
-            .state
-            .notice
-            .as_deref()
-            .is_some_and(|n| n.contains("No view")));
         let Some(Dialog::Find(f)) = &a.state.dialog else {
             panic!("find")
         };
-        assert_eq!(f.selected, 0);
+        assert!(a.find_items(f).is_empty());
+        alt(&mut a, 'v');
+        let Some(Dialog::Find(f)) = &a.state.dialog else {
+            panic!("find")
+        };
+        assert_eq!(a.find_items(f).len(), 3);
     }
 
     #[test]
