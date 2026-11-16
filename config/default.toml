@@ -15,6 +15,10 @@ indent_width = 4
 auto_pair = true
 # A new line starts with the indentation of the line above.
 auto_indent = true
+# Show suggestions while typing. Ctrl+Space (or Alt+/) opens them on demand.
+completion = true
+# Characters to type before suggestions appear on their own. Range 1 to 10.
+completion_min_chars = 2
 
 [ui]
 # Theme name. Built in: "dark", "light". A file named <theme>.toml in the

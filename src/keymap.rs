@@ -37,6 +37,11 @@ pub enum Action {
     BufferNext,
     BufferPrev,
     BufferReopen,
+    CompletionTrigger,
+    CompletionAccept,
+    CompletionDismiss,
+    CompletionNext,
+    CompletionPrev,
     Edit(EditCmd),
 }
 
@@ -59,6 +64,11 @@ const ACTIONS: &[(&str, Action)] = &[
     ("buffer.next", Action::BufferNext),
     ("buffer.prev", Action::BufferPrev),
     ("buffer.reopen", Action::BufferReopen),
+    ("completion.trigger", Action::CompletionTrigger),
+    ("completion.accept", Action::CompletionAccept),
+    ("completion.dismiss", Action::CompletionDismiss),
+    ("completion.next", Action::CompletionNext),
+    ("completion.prev", Action::CompletionPrev),
     (
         "editor.move_left",
         Action::Edit(EditCmd::Move(Motion::Left)),
@@ -178,6 +188,18 @@ impl Action {
         ACTIONS.iter().find(|(n, _)| *n == name).map(|(_, a)| *a)
     }
 
+    /// Completion actions leave the popup state to their own handling.
+    pub fn is_completion(self) -> bool {
+        matches!(
+            self,
+            Action::CompletionTrigger
+                | Action::CompletionAccept
+                | Action::CompletionDismiss
+                | Action::CompletionNext
+                | Action::CompletionPrev
+        )
+    }
+
     /// Short description for the hint bar and help overlay.
     pub fn description(self) -> &'static str {
         match self {
@@ -199,6 +221,11 @@ impl Action {
             Action::BufferNext => "next buffer",
             Action::BufferPrev => "previous buffer",
             Action::BufferReopen => "reopen closed buffer",
+            Action::CompletionTrigger => "show suggestions",
+            Action::CompletionAccept => "accept suggestion",
+            Action::CompletionDismiss => "dismiss suggestions",
+            Action::CompletionNext => "next suggestion",
+            Action::CompletionPrev => "previous suggestion",
             Action::Edit(cmd) => cmd.description(),
         }
     }
@@ -211,6 +238,8 @@ pub enum Scope {
     Editor,
     Context,
     Results,
+    /// Active only while the suggestion popup is open.
+    Completion,
     Dialog,
 }
 
@@ -221,6 +250,7 @@ impl Scope {
             Scope::Editor => "editor",
             Scope::Context => "context",
             Scope::Results => "results",
+            Scope::Completion => "completion",
             Scope::Dialog => "dialog",
         }
     }
@@ -231,6 +261,7 @@ impl Scope {
             Scope::Editor,
             Scope::Context,
             Scope::Results,
+            Scope::Completion,
             Scope::Dialog,
         ]
         .into_iter()
@@ -240,7 +271,7 @@ impl Scope {
     /// R4.4: the editor must always accept printable characters, and global
     /// bindings are active while it has focus.
     fn forbids_printable(self) -> bool {
-        matches!(self, Scope::Global | Scope::Editor)
+        matches!(self, Scope::Global | Scope::Editor | Scope::Completion)
     }
 }
 
@@ -613,6 +644,7 @@ mod tests {
             Scope::Editor,
             Scope::Context,
             Scope::Results,
+            Scope::Completion,
             Scope::Dialog,
         ];
         for (name, action) in ACTIONS {

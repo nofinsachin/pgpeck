@@ -13,14 +13,6 @@ use crate::layout;
 use crate::sql::{self, Token, TokenKind};
 use crate::theme::Theme;
 
-const HINT_ACTIONS: &[Action] = &[
-    Action::HelpToggle,
-    Action::FocusNext,
-    Action::FocusEditor,
-    Action::ToggleContext,
-    Action::AppQuit,
-];
-
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
     let areas = layout::compute(area, &app.state, &app.config);
@@ -44,6 +36,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     if let Some(rect) = areas.results {
         draw_placeholder(frame, app, theme, Pane::Results, rect);
+    }
+    if let (Some(rect), Some(_)) = (areas.editor, &app.state.completion) {
+        draw_completion(frame, app, theme, rect);
     }
     if app.config.ui.show_hint_bar {
         draw_hint_bar(frame, app, theme, areas.hint);
@@ -243,6 +238,81 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
     }
 }
 
+/// The suggestion popup, below the word being completed (above it when
+/// there is no room).
+fn draw_completion(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
+    let st = &app.state;
+    let Some(completion) = &st.completion else {
+        return;
+    };
+    let doc = st.doc();
+    let area = layout::editor_area(pane, doc.buffer.line_count());
+    let cursor = doc.buffer.cursor();
+    if cursor.line < doc.scroll_top || completion.start.line < doc.scroll_top {
+        return;
+    }
+    let start_line = doc
+        .buffer
+        .lines()
+        .get(completion.start.line)
+        .map_or("", String::as_str);
+    let word_x = display_col(start_line, completion.start.col).saturating_sub(doc.scroll_left);
+    let row = cursor.line - doc.scroll_top;
+
+    let shown = completion.items.len().min(MAX_SUGGESTIONS);
+    let label_width = completion
+        .items
+        .iter()
+        .map(|c| c.text.chars().count())
+        .max()
+        .unwrap_or(0);
+    // marker, label, space, tag, plus the border
+    let width = (label_width + 2 + 1 + 2 + 2) as u16;
+    let height = shown as u16 + 2;
+    let frame_area = frame.area();
+
+    let x = (area.text.x + word_x as u16).min(frame_area.right().saturating_sub(width));
+    let below = area.text.y + row as u16 + 1;
+    let y = if below + height <= frame_area.bottom() {
+        below
+    } else {
+        (area.text.y + row as u16).saturating_sub(height)
+    };
+    let popup = Rect::new(
+        x,
+        y,
+        width.min(frame_area.width),
+        height.min(frame_area.height),
+    );
+
+    // Keep the selected item in view.
+    let top = (completion.selected + 1).saturating_sub(shown);
+    let lines: Vec<Line> = completion
+        .items
+        .iter()
+        .enumerate()
+        .skip(top)
+        .take(shown)
+        .map(|(i, item)| {
+            let selected = i == completion.selected;
+            let marker = if selected { "▶ " } else { "  " };
+            let text = format!("{marker}{:<label_width$} {}", item.text, item.kind.tag());
+            let style = if selected {
+                Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            Line::styled(text, style)
+        })
+        .collect();
+    let block = Block::bordered().border_style(Style::new().fg(theme.focus));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+/// Suggestions shown at once.
+const MAX_SUGGESTIONS: usize = 8;
+
 /// Is column `col` of `line` inside the selection?
 fn is_selected(selection: Option<(Pos, Pos)>, line: usize, col: usize, line_len: usize) -> bool {
     let Some((start, end)) = selection else {
@@ -263,7 +333,7 @@ fn is_selected(selection: Option<(Pos, Pos)>, line: usize, col: usize, line_len:
 fn draw_hint_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let mut spans = Vec::new();
     let mut used = 0usize;
-    for action in HINT_ACTIONS {
+    for action in app.hint_actions() {
         let Some(key) = app.hint_key(*action) else {
             continue;
         };
@@ -468,6 +538,54 @@ mod tests {
             "the last global binding is visible"
         );
         assert_snapshot("editor_help_top_80x24", &top);
+    }
+
+    #[test]
+    fn suggestion_popup_is_drawn_under_the_word() {
+        let mut a = app(80, 24);
+        type_text(&mut a, "select 1\nfrom t\nwhere x\nde");
+        key(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        let out = render(&a, 80, 24);
+        assert!(out.contains("▶ delete"), "{out}");
+        assert!(out.contains("  desc") && out.contains("declare"));
+        // The popup sits under the word and the hint bar shows its keys.
+        let hint = out.lines().rev().nth(1).expect("hint line");
+        assert!(hint.contains("Enter accept suggestion"), "{hint}");
+        assert_snapshot("completion_80x24", &out);
+    }
+
+    #[test]
+    fn suggestion_popup_flips_above_when_there_is_no_room() {
+        let mut a = app(80, 24);
+        for _ in 0..3 {
+            type_text(&mut a, "x\n");
+        }
+        type_text(&mut a, "de");
+        // Shrink so that the cursor row is the last one in the editor pane.
+        a.update(Event::Resize(80, 16));
+        let out = render(&a, 80, 16);
+        assert!(out.contains("declare"), "{out}");
+        let popup_row = out
+            .lines()
+            .position(|l| l.contains("declare"))
+            .expect("row");
+        let cursor_row = out
+            .lines()
+            .position(|l| l.contains("4 de"))
+            .expect("cursor row");
+        assert!(popup_row != cursor_row);
+    }
+
+    #[test]
+    fn the_selected_suggestion_is_not_marked_by_color_alone() {
+        let mut a = app(80, 24);
+        type_text(&mut a, "de");
+        // The cursor is on row 1. Row 2 is the popup border, row 3 the first
+        // item, which is selected, and row 4 the second.
+        let selected = cell_style(&a, 80, 24, 5, 3);
+        assert!(selected.add_modifier.contains(Modifier::REVERSED));
+        let other = cell_style(&a, 80, 24, 5, 4);
+        assert!(!other.add_modifier.contains(Modifier::REVERSED));
     }
 
     #[test]
