@@ -1,30 +1,30 @@
 ┌ Editor ──────────────────────────────────────────────────────────────────────────────────────────┐
 │1                                                                                                 │
-│                                                                                                  │
-│                                                                                                  │
 │            ┌───────────────────────────────── Help ─────────────────────────────────┐            │
 │            │results keys                                                            │            │
 │            │  ?                 help                  help.toggle                   │            │
 │            │                                                                        │            │
 │            │global keys                                                             │            │
-└────────────│  Alt+1             focus context         focus.context                 │────────────┘
-┌ Context ───│  Alt+2             focus editor          focus.editor                  │────────────┐
-│Objects used│  Alt+3             focus results         focus.results                 │            │
+│            │  Alt+1             focus context         focus.context                 │            │
+│            │  Alt+2             focus editor          focus.editor                  │            │
+└────────────│  Alt+3             focus results         focus.results                 │────────────┘
+┌ Context ───│  Alt+Left          previous buffer       buffer.prev                   │────────────┐
+│Objects used│  Alt+Right         next buffer           buffer.next                   │            │
+│            │  Alt+T             reopen closed buffer  buffer.reopen                 │            │
 │            │  Ctrl+1            focus context         focus.context                 │            │
 │            │  Ctrl+2            focus editor          focus.editor                  │            │
 │            │  Ctrl+3            focus results         focus.results                 │            │
+└────────────│  Ctrl+N            new buffer            buffer.new                    │────────────┘
+┌ ▶ Results ─│  Ctrl+PageDown     next buffer           buffer.next                   │────────────┐
+│Query result│  Ctrl+PageUp       previous buffer       buffer.prev                   │            │
 │            │  Ctrl+Q            quit                  app.quit                      │            │
-└────────────│  F1                help                  help.toggle                   │────────────┘
-┌ ▶ Results ─│  F3                toggle context strip  view.toggle_context           │────────────┐
-│Query result│  F4                toggle results        view.toggle_results           │            │
+│            │  Ctrl+W            close buffer          buffer.close                  │            │
+│            │  F1                help                  help.toggle                   │            │
+│            │  F3                toggle context strip  view.toggle_context           │            │
+│            │  F4                toggle results        view.toggle_results           │            │
 │            │  F6                next pane             focus.next                    │            │
 │            │  Shift+F6          previous pane         focus.prev                    │            │
 │            │  Shift+Tab         previous pane         focus.prev                    │            │
-│            │  Tab               next pane             focus.next                    │            │
-│            │                                                                        │            │
-│            └────────────────────────────────────────────────────────────────────────┘            │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+└────────────└──────────────────── Up/Down scroll  ? close  (1/3) ────────────────────┘────────────┘
 ? help  F6 next pane  Alt+2 focus editor  F3 toggle context strip  Ctrl+Q quit
  no connection │ focus: Results │ Ln 1, Col 1

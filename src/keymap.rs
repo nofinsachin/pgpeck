@@ -32,6 +32,11 @@ pub enum Action {
     HelpScrollDown,
     HelpPageUp,
     HelpPageDown,
+    BufferNew,
+    BufferClose,
+    BufferNext,
+    BufferPrev,
+    BufferReopen,
     Edit(EditCmd),
 }
 
@@ -49,6 +54,11 @@ const ACTIONS: &[(&str, Action)] = &[
     ("help.scroll_down", Action::HelpScrollDown),
     ("help.page_up", Action::HelpPageUp),
     ("help.page_down", Action::HelpPageDown),
+    ("buffer.new", Action::BufferNew),
+    ("buffer.close", Action::BufferClose),
+    ("buffer.next", Action::BufferNext),
+    ("buffer.prev", Action::BufferPrev),
+    ("buffer.reopen", Action::BufferReopen),
     (
         "editor.move_left",
         Action::Edit(EditCmd::Move(Motion::Left)),
@@ -184,6 +194,11 @@ impl Action {
             Action::HelpScrollDown => "scroll down",
             Action::HelpPageUp => "page up",
             Action::HelpPageDown => "page down",
+            Action::BufferNew => "new buffer",
+            Action::BufferClose => "close buffer",
+            Action::BufferNext => "next buffer",
+            Action::BufferPrev => "previous buffer",
+            Action::BufferReopen => "reopen closed buffer",
             Action::Edit(cmd) => cmd.description(),
         }
     }

@@ -48,15 +48,55 @@ pub struct State {
     /// One-line message for the status bar.
     pub notice: Option<String>,
     pub size: (u16, u16),
-    pub editor: Buffer,
-    /// First visible line and first visible terminal column of the editor.
-    pub scroll_top: usize,
-    pub scroll_left: usize,
+    /// Open buffers, in tab order. Never empty.
+    pub docs: Vec<Document>,
+    /// Index of the buffer shown in the editor.
+    pub active: usize,
+    /// Recently closed buffers, newest last, so a close can be undone.
+    pub closed: Vec<Document>,
+    /// Used to name new buffers.
+    pub buffers_created: usize,
     /// Text from the last cut or copy. The system clipboard comes later (R14).
     pub register: String,
 }
 
+/// One editor buffer with its view position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Document {
+    pub name: String,
+    pub buffer: Buffer,
+    /// First visible line and first visible terminal column.
+    pub scroll_top: usize,
+    pub scroll_left: usize,
+}
+
+impl Document {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            buffer: Buffer::new(),
+            scroll_top: 0,
+            scroll_left: 0,
+        }
+    }
+}
+
+/// How many closed buffers are remembered.
+const CLOSED_LIMIT: usize = 10;
+
 impl State {
+    pub fn doc(&self) -> &Document {
+        &self.docs[self.active]
+    }
+
+    pub fn editor(&self) -> &Buffer {
+        &self.docs[self.active].buffer
+    }
+
+    pub fn editor_mut(&mut self) -> &mut Buffer {
+        &mut self.docs[self.active].buffer
+    }
+
     pub fn new(config: &Config) -> Self {
         Self {
             focus: Pane::Editor,
@@ -67,9 +107,10 @@ impl State {
             quit: false,
             notice: None,
             size: (0, 0),
-            editor: Buffer::new(),
-            scroll_top: 0,
-            scroll_left: 0,
+            docs: vec![Document::new("Buffer 1".to_string())],
+            active: 0,
+            closed: Vec::new(),
+            buffers_created: 1,
             register: String::new(),
         }
     }
@@ -152,7 +193,7 @@ impl App {
                 if let KeyCode::Char(c) = chord.code {
                     let opts = self.config.editor.options();
                     self.state.notice = None;
-                    self.state.editor.insert_char(c, &opts);
+                    self.state.editor_mut().insert_char(c, &opts);
                 }
             }
             None => {}
@@ -166,7 +207,7 @@ impl App {
         }
         let opts = self.config.editor.options();
         self.state.notice = None;
-        self.state.editor.insert_str(text, &opts);
+        self.state.editor_mut().insert_str(text, &opts);
     }
 
     /// True while the editor uses Tab and Shift+Tab for indenting.
@@ -192,7 +233,7 @@ impl App {
         layout::compute(self.screen(), &self.state, &self.config)
             .editor
             .map_or(10, |pane| {
-                let area = layout::editor_area(pane, self.state.editor.line_count());
+                let area = layout::editor_area(pane, self.state.editor().line_count());
                 usize::from(area.text.height).max(1)
             })
     }
@@ -202,30 +243,81 @@ impl App {
         let Some(pane) = layout::compute(self.screen(), &self.state, &self.config).editor else {
             return;
         };
-        let st = &mut self.state;
-        let area = layout::editor_area(pane, st.editor.line_count());
+        let doc = &mut self.state.docs[self.state.active];
+        let area = layout::editor_area(pane, doc.buffer.line_count());
         let (height, width) = (usize::from(area.text.height), usize::from(area.text.width));
         if height == 0 || width == 0 {
             return;
         }
-        let cursor = st.editor.cursor();
-        if cursor.line < st.scroll_top {
-            st.scroll_top = cursor.line;
-        } else if cursor.line >= st.scroll_top + height {
-            st.scroll_top = cursor.line + 1 - height;
+        let cursor = doc.buffer.cursor();
+        if cursor.line < doc.scroll_top {
+            doc.scroll_top = cursor.line;
+        } else if cursor.line >= doc.scroll_top + height {
+            doc.scroll_top = cursor.line + 1 - height;
         }
-        st.scroll_top = st.scroll_top.min(st.editor.line_count() - 1);
+        doc.scroll_top = doc.scroll_top.min(doc.buffer.line_count() - 1);
 
-        let line = st
-            .editor
+        let line = doc
+            .buffer
             .lines()
             .get(cursor.line)
             .map_or("", String::as_str);
         let x = display_col(line, cursor.col);
-        if x < st.scroll_left {
-            st.scroll_left = x;
-        } else if x >= st.scroll_left + width {
-            st.scroll_left = x + 1 - width;
+        if x < doc.scroll_left {
+            doc.scroll_left = x;
+        } else if x >= doc.scroll_left + width {
+            doc.scroll_left = x + 1 - width;
+        }
+    }
+
+    fn new_buffer(&mut self) {
+        let st = &mut self.state;
+        st.buffers_created += 1;
+        st.docs
+            .push(Document::new(format!("Buffer {}", st.buffers_created)));
+        st.active = st.docs.len() - 1;
+        st.focus = Pane::Editor;
+    }
+
+    fn switch_buffer(&mut self, step: isize) {
+        let st = &mut self.state;
+        let len = st.docs.len() as isize;
+        st.active = (st.active as isize + step).rem_euclid(len) as usize;
+    }
+
+    /// Closing keeps the buffer, so `buffer.reopen` can bring it back.
+    fn close_buffer(&mut self) {
+        let st = &mut self.state;
+        let closed = st.docs.remove(st.active);
+        let name = closed.name.clone();
+        if !closed.buffer.text().is_empty() {
+            st.closed.push(closed);
+            if st.closed.len() > CLOSED_LIMIT {
+                st.closed.remove(0);
+            }
+        }
+        if st.docs.is_empty() {
+            st.buffers_created += 1;
+            st.docs
+                .push(Document::new(format!("Buffer {}", st.buffers_created)));
+        }
+        st.active = st.active.min(st.docs.len() - 1);
+        self.state.notice = Some(match self.hint_key(Action::BufferReopen) {
+            Some(key) => format!("Closed {name}. {key} reopens it"),
+            None => format!("Closed {name}"),
+        });
+    }
+
+    fn reopen_buffer(&mut self) {
+        let st = &mut self.state;
+        match st.closed.pop() {
+            Some(doc) => {
+                st.notice = Some(format!("Reopened {}", doc.name));
+                st.docs.push(doc);
+                st.active = st.docs.len() - 1;
+                st.focus = Pane::Editor;
+            }
+            None => st.notice = Some("No closed buffer to reopen".to_string()),
         }
     }
 
@@ -300,11 +392,18 @@ impl App {
             Action::HelpScrollDown => self.scroll_help(false, false),
             Action::HelpPageUp => self.scroll_help(true, true),
             Action::HelpPageDown => self.scroll_help(false, true),
+            Action::BufferNew => self.new_buffer(),
+            Action::BufferClose => self.close_buffer(),
+            Action::BufferNext => self.switch_buffer(1),
+            Action::BufferPrev => self.switch_buffer(-1),
+            Action::BufferReopen => self.reopen_buffer(),
             Action::Edit(cmd) => {
                 let opts = self.config.editor.options();
                 let page = self.page_lines();
                 let st = &mut self.state;
-                st.editor.apply(cmd, &opts, page, &mut st.register);
+                st.docs[st.active]
+                    .buffer
+                    .apply(cmd, &opts, page, &mut st.register);
             }
         }
     }
@@ -372,7 +471,7 @@ mod tests {
         let mut a = app();
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Editor);
-        assert_eq!(a.state.editor.text(), "    ");
+        assert_eq!(a.state.editor().text(), "    ");
         press(&mut a, KeyCode::F(6), KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Context, "F6 always leaves the editor");
     }
@@ -450,7 +549,7 @@ mod tests {
         let mut a = app();
         // `?` opens help in other panes. In the editor it is just a character (R4.3, R4.4).
         type_text(&mut a, "select ?, q j");
-        assert_eq!(a.state.editor.text(), "select ?, q j");
+        assert_eq!(a.state.editor().text(), "select ?, q j");
         assert!(!a.state.help_open);
     }
 
@@ -458,7 +557,7 @@ mod tests {
     fn shifted_letters_type_as_capitals() {
         let mut a = app();
         press(&mut a, KeyCode::Char('A'), KeyModifiers::SHIFT);
-        assert_eq!(a.state.editor.text(), "A");
+        assert_eq!(a.state.editor().text(), "A");
     }
 
     #[test]
@@ -466,7 +565,7 @@ mod tests {
         let mut a = app();
         press(&mut a, KeyCode::Char('c'), KeyModifiers::CONTROL);
         press(&mut a, KeyCode::Char('k'), KeyModifiers::ALT);
-        assert_eq!(a.state.editor.text(), "");
+        assert_eq!(a.state.editor().text(), "");
     }
 
     #[test]
@@ -478,7 +577,7 @@ mod tests {
             press(&mut a, KeyCode::Char(c), KeyModifiers::NONE);
         }
         assert_eq!(a.state, before);
-        assert_eq!(a.state.editor.text(), "");
+        assert_eq!(a.state.editor().text(), "");
     }
 
     #[test]
@@ -494,8 +593,8 @@ mod tests {
         ] {
             press(&mut a, code, KeyModifiers::NONE);
         }
-        assert_eq!(a.state.editor.text(), "abc");
-        assert_eq!(a.state.editor.cursor().col, 3);
+        assert_eq!(a.state.editor().text(), "abc");
+        assert_eq!(a.state.editor().cursor().col, 3);
     }
 
     #[test]
@@ -504,13 +603,13 @@ mod tests {
         type_text(&mut a, "ab");
         press(&mut a, KeyCode::Left, KeyModifiers::NONE);
         press(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
-        assert_eq!(a.state.editor.text(), "b");
+        assert_eq!(a.state.editor().text(), "b");
         press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(a.state.editor.text(), "\nb");
+        assert_eq!(a.state.editor().text(), "\nb");
         press(&mut a, KeyCode::Char('z'), KeyModifiers::CONTROL);
-        assert_eq!(a.state.editor.text(), "b");
+        assert_eq!(a.state.editor().text(), "b");
         press(&mut a, KeyCode::Char('y'), KeyModifiers::CONTROL);
-        assert_eq!(a.state.editor.text(), "\nb");
+        assert_eq!(a.state.editor().text(), "\nb");
     }
 
     #[test]
@@ -519,11 +618,11 @@ mod tests {
         type_text(&mut a, "hello");
         press(&mut a, KeyCode::Char('a'), KeyModifiers::CONTROL);
         press(&mut a, KeyCode::Char('x'), KeyModifiers::CONTROL);
-        assert_eq!(a.state.editor.text(), "");
+        assert_eq!(a.state.editor().text(), "");
         assert_eq!(a.state.register, "hello");
         press(&mut a, KeyCode::Char('v'), KeyModifiers::CONTROL);
         press(&mut a, KeyCode::Char('v'), KeyModifiers::CONTROL);
-        assert_eq!(a.state.editor.text(), "hellohello");
+        assert_eq!(a.state.editor().text(), "hellohello");
     }
 
     #[test]
@@ -532,24 +631,24 @@ mod tests {
         type_text(&mut a, "abc");
         press(&mut a, KeyCode::Left, KeyModifiers::SHIFT);
         press(&mut a, KeyCode::Left, KeyModifiers::SHIFT);
-        assert_eq!(a.state.editor.selected_text().as_deref(), Some("bc"));
+        assert_eq!(a.state.editor().selected_text().as_deref(), Some("bc"));
     }
 
     #[test]
     fn bracketed_paste_inserts_text_in_the_editor_only() {
         let mut a = app();
         a.update(Event::Paste("select 1;\nselect 2;".to_string()));
-        assert_eq!(a.state.editor.text(), "select 1;\nselect 2;");
+        assert_eq!(a.state.editor().text(), "select 1;\nselect 2;");
         assert!(!a.state.quit);
 
         alt(&mut a, '3');
         a.update(Event::Paste("ignored".to_string()));
-        assert_eq!(a.state.editor.text(), "select 1;\nselect 2;");
+        assert_eq!(a.state.editor().text(), "select 1;\nselect 2;");
 
         alt(&mut a, '2');
         press(&mut a, KeyCode::F(1), KeyModifiers::NONE);
         a.update(Event::Paste("ignored".to_string()));
-        assert_eq!(a.state.editor.text(), "select 1;\nselect 2;");
+        assert_eq!(a.state.editor().text(), "select 1;\nselect 2;");
     }
 
     #[test]
@@ -557,7 +656,7 @@ mod tests {
         let mut a = app();
         a.update(Event::Paste("\u{11}".to_string())); // Ctrl+Q as a raw byte
         assert!(!a.state.quit);
-        assert_eq!(a.state.editor.text(), "");
+        assert_eq!(a.state.editor().text(), "");
     }
 
     #[test]
@@ -567,12 +666,15 @@ mod tests {
         for _ in 0..40 {
             press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
         }
-        assert!(a.state.scroll_top > 0);
-        let cursor_line = a.state.editor.cursor().line;
+        assert!(a.state.doc().scroll_top > 0);
+        let cursor_line = a.state.editor().cursor().line;
         let height = a.page_lines();
-        assert!(cursor_line >= a.state.scroll_top && cursor_line < a.state.scroll_top + height);
+        assert!(
+            cursor_line >= a.state.doc().scroll_top
+                && cursor_line < a.state.doc().scroll_top + height
+        );
         press(&mut a, KeyCode::Home, KeyModifiers::CONTROL);
-        assert_eq!(a.state.scroll_top, 0);
+        assert_eq!(a.state.doc().scroll_top, 0);
     }
 
     #[test]
@@ -580,9 +682,9 @@ mod tests {
         let mut a = app();
         a.update(Event::Resize(80, 24));
         type_text(&mut a, &"x".repeat(200));
-        assert!(a.state.scroll_left > 100);
+        assert!(a.state.doc().scroll_left > 100);
         press(&mut a, KeyCode::Home, KeyModifiers::NONE);
-        assert_eq!(a.state.scroll_left, 0);
+        assert_eq!(a.state.doc().scroll_left, 0);
     }
 
     #[test]
@@ -595,7 +697,153 @@ mod tests {
         press(&mut a, KeyCode::Home, KeyModifiers::CONTROL);
         let page = a.page_lines();
         press(&mut a, KeyCode::PageDown, KeyModifiers::NONE);
-        assert_eq!(a.state.editor.cursor().line, page);
+        assert_eq!(a.state.editor().cursor().line, page);
+    }
+
+    fn ctrl(app: &mut App, c: char) {
+        press(app, KeyCode::Char(c), KeyModifiers::CONTROL);
+    }
+
+    #[test]
+    fn new_buffer_is_empty_active_and_focuses_the_editor() {
+        let mut a = app();
+        type_text(&mut a, "first");
+        alt(&mut a, '3');
+        ctrl(&mut a, 'n');
+        assert_eq!(a.state.docs.len(), 2);
+        assert_eq!(a.state.active, 1);
+        assert_eq!(a.state.focus, Pane::Editor);
+        assert_eq!(a.state.editor().text(), "");
+        assert_eq!(a.state.doc().name, "Buffer 2");
+    }
+
+    #[test]
+    fn buffers_keep_their_own_text_cursor_and_scroll() {
+        let mut a = app();
+        a.update(Event::Resize(80, 24));
+        for _ in 0..40 {
+            press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        }
+        let first_top = a.state.doc().scroll_top;
+        assert!(first_top > 0);
+        ctrl(&mut a, 'n');
+        type_text(&mut a, "second");
+        assert_eq!(a.state.doc().scroll_top, 0);
+        press(&mut a, KeyCode::Left, KeyModifiers::ALT);
+        assert_eq!(a.state.active, 0);
+        assert_eq!(a.state.doc().scroll_top, first_top);
+        assert_eq!(a.state.editor().line_count(), 41);
+        press(&mut a, KeyCode::Right, KeyModifiers::ALT);
+        assert_eq!(a.state.editor().text(), "second");
+    }
+
+    #[test]
+    fn buffers_have_separate_undo_history() {
+        let mut a = app();
+        type_text(&mut a, "one");
+        ctrl(&mut a, 'n');
+        ctrl(&mut a, 'z');
+        assert_eq!(
+            a.state.editor().text(),
+            "",
+            "nothing to undo in the new buffer"
+        );
+        press(&mut a, KeyCode::PageUp, KeyModifiers::CONTROL);
+        assert_eq!(a.state.editor().text(), "one");
+        ctrl(&mut a, 'z');
+        assert_eq!(a.state.editor().text(), "");
+    }
+
+    #[test]
+    fn switching_wraps_around() {
+        let mut a = app();
+        ctrl(&mut a, 'n');
+        ctrl(&mut a, 'n');
+        assert_eq!(a.state.active, 2);
+        press(&mut a, KeyCode::PageDown, KeyModifiers::CONTROL);
+        assert_eq!(a.state.active, 0);
+        press(&mut a, KeyCode::PageUp, KeyModifiers::CONTROL);
+        assert_eq!(a.state.active, 2);
+    }
+
+    #[test]
+    fn closing_selects_a_neighbour_and_can_be_undone() {
+        let mut a = app();
+        type_text(&mut a, "keep");
+        ctrl(&mut a, 'n');
+        type_text(&mut a, "lose");
+        ctrl(&mut a, 'w');
+        assert_eq!(a.state.docs.len(), 1);
+        assert_eq!(a.state.editor().text(), "keep");
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("Closed Buffer 2") && n.contains("Alt+T")));
+        alt(&mut a, 't');
+        assert_eq!(a.state.docs.len(), 2);
+        assert_eq!(a.state.editor().text(), "lose");
+        assert_eq!(a.state.doc().name, "Buffer 2");
+    }
+
+    #[test]
+    fn closing_the_last_buffer_leaves_a_fresh_empty_one() {
+        let mut a = app();
+        type_text(&mut a, "text");
+        ctrl(&mut a, 'w');
+        assert_eq!(a.state.docs.len(), 1);
+        assert_eq!(a.state.editor().text(), "");
+        assert_eq!(
+            a.state.doc().name,
+            "Buffer 2",
+            "a closed name is not reused"
+        );
+        alt(&mut a, 't');
+        assert_eq!(a.state.editor().text(), "text");
+    }
+
+    #[test]
+    fn empty_buffers_are_not_kept_for_reopening() {
+        let mut a = app();
+        ctrl(&mut a, 'n');
+        ctrl(&mut a, 'w');
+        assert!(a.state.closed.is_empty());
+        alt(&mut a, 't');
+        assert_eq!(a.state.docs.len(), 1);
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("No closed buffer")));
+    }
+
+    #[test]
+    fn only_the_most_recent_closed_buffers_are_kept() {
+        let mut a = app();
+        for i in 0..CLOSED_LIMIT + 3 {
+            type_text(&mut a, &i.to_string());
+            ctrl(&mut a, 'w');
+        }
+        assert_eq!(a.state.closed.len(), CLOSED_LIMIT);
+    }
+
+    #[test]
+    fn buffer_keys_work_from_any_pane() {
+        let mut a = app();
+        alt(&mut a, '3');
+        ctrl(&mut a, 'n');
+        assert_eq!(a.state.docs.len(), 2);
+    }
+
+    #[test]
+    fn the_register_is_shared_between_buffers() {
+        let mut a = app();
+        type_text(&mut a, "shared");
+        ctrl(&mut a, 'a');
+        ctrl(&mut a, 'x');
+        ctrl(&mut a, 'n');
+        ctrl(&mut a, 'v');
+        assert_eq!(a.state.editor().text(), "shared");
     }
 
     #[test]
