@@ -1,0 +1,10 @@
+# Light theme. Colors are names (red, blue, ...) or #rrggbb values.
+focus = "blue"
+error = "red"
+null = "gray"
+dimmed = "gray"
+keyword = "blue"
+string = "green"
+status_prod = "red"
+status_fg = "white"
+status_bg = "dark-gray"

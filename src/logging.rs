@@ -10,21 +10,6 @@ use std::path::PathBuf;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
-/// Returns the directory that holds log files.
-///
-/// Uses `$XDG_STATE_HOME/oxpecker`, falling back to `$HOME/.local/state/oxpecker`.
-/// Returns `None` when neither variable is usable.
-fn log_dir() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_STATE_HOME") {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => {
-            let home = std::env::var_os("HOME").filter(|h| !h.is_empty())?;
-            PathBuf::from(home).join(".local/state")
-        }
-    };
-    Some(base.join("oxpecker"))
-}
-
 /// Creates the directory with owner-only permissions.
 fn create_private_dir(path: &PathBuf) -> io::Result<()> {
     DirBuilder::new().recursive(true).mode(0o700).create(path)
@@ -36,7 +21,7 @@ fn create_private_dir(path: &PathBuf) -> io::Result<()> {
 /// Logging is best effort: if the log directory cannot be created, the
 /// application still starts and returns `None`.
 pub fn init() -> Option<WorkerGuard> {
-    let dir = log_dir()?;
+    let dir = crate::paths::state_dir()?;
     create_private_dir(&dir).ok()?;
 
     let appender = tracing_appender::rolling::daily(&dir, "oxpecker.log");
