@@ -17,6 +17,7 @@ Oxpecker is a fast, terminal-based PostgreSQL client written in Rust. It is a mo
 ## Product principles
 
 - **Keyboard-first.** Every action is reachable from the keyboard. Mouse support is optional.
+- **Simple keys first.** Oxpecker starts on a commands pane where one plain key is enough: `C` connects, `R` runs, `E` edits, `N` opens a buffer, `Q` quits. Esc leaves the editor. Function keys and chords are never required for the main tasks.
 - **Modeless.** The editor always accepts text. No key changes what typing does. Focus moves between panes with keys that never produce characters.
 - **Fast.** Typing latency, focus changes, and startup are measured against requirements (PRF-001 to PRF-003). Background work never freezes the UI.
 - **Discoverable.** A hint bar, a help overlay, and a command palette (`Ctrl+P`) expose features without reading docs.
@@ -44,7 +45,7 @@ Out of scope:
 
 ## Core UX model
 
-The default screen has an editor, a context strip, a results pane, and a status bar. There is no permanent object tree.
+The default screen has, from top to bottom, a context strip, an editor, a results pane, and a status bar. The context strip is also the commands pane and has focus at startup. There is no permanent object tree.
 
 - **Find overlay (`Ctrl+P`):** Fuzzy search across schemas, tables, columns, functions, types, actions, and history.
 - **Relationship view:** Shows a table with its outgoing and incoming foreign keys. Following a relation moves the center, and a breadcrumb trail records the path.
@@ -57,7 +58,7 @@ Requirements are defined in the UX requirements document, using stable IDs (for 
 
 ## Key decisions
 
-- `Ctrl+Enter` runs the statement under the cursor. With a selection, it runs the selection.
+- `Ctrl+R` runs the statement under the cursor. With a selection, it runs the selection. In the commands pane and the results pane, `R` does the same.
 - `Ctrl+C` cancels a running query. Otherwise it is unbound. **Open** (see the UX open questions).
-- Passwords come from the OS keychain, `.pgpass`, an environment variable, or a prompt. They are never stored in plain text, logged, or shown on screen.
+- Oxpecker never stores a password. It asks each time. Users can opt in to reading `.pgpass` or an environment variable through configuration. Passwords are never logged or shown on screen.
 - Only the editor accepts printable characters. Single-letter shortcuts in other panes only work when those panes have focus.

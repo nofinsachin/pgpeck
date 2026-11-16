@@ -11,6 +11,7 @@ pub mod db;
 pub mod diag;
 pub mod editor;
 pub mod events;
+pub mod form;
 pub mod fuzzy;
 pub mod keymap;
 pub mod layout;

@@ -13,6 +13,9 @@ pub const MIN_SIZE: (u16, u16) = (60, 15);
 /// Width below which the context strip collapses to a single line (R10.7).
 const NARROW_WIDTH: u16 = 80;
 
+/// Height of the context pane, borders included: four lines of text.
+const CONTEXT_HEIGHT: u16 = 6;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Areas {
     /// Set when the terminal is below the minimum size.
@@ -57,21 +60,22 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     let context_height = match (state.show_context, body.width < NARROW_WIDTH) {
         (false, _) => 0,
         (true, true) => 3,
-        (true, false) => 7,
+        (true, false) => CONTEXT_HEIGHT,
     };
     let results = if state.show_results {
         Constraint::Percentage(40)
     } else {
         Constraint::Length(0)
     };
-    let [editor, context, results_area] = Split::vertical([
-        Constraint::Min(3),
+    // Top to bottom: where you are, what you write, what came back.
+    let [context, editor, results_area] = Split::vertical([
         Constraint::Length(context_height),
+        Constraint::Min(3),
         results,
     ])
     .areas(body);
-    areas.editor = Some(editor);
     areas.context = state.show_context.then_some(context);
+    areas.editor = Some(editor);
     areas.results = state.show_results.then_some(results_area);
     areas
 }

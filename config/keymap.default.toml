@@ -5,7 +5,8 @@
 # "none" to remove a default binding. Two actions on the same key in one scope
 # is a conflict, and the later one is refused.
 #
-# Scopes: global, editor, context, results, completion, picker, prompt, dialog.
+# Scopes: global, editor, context, results, completion, picker, form, prompt,
+# dialog. The context scope is the commands pane that has focus at startup.
 # The editor and global scopes cannot bind printable characters, because the
 # editor must always accept typing. Use Ctrl, Alt or function keys there.
 #
@@ -16,7 +17,7 @@
 # Alt+digit binding.
 #
 # Actions: app.quit, focus.context, focus.editor, focus.results, focus.next,
-# focus.prev, view.toggle_context, view.toggle_results, help.toggle,
+# focus.prev, focus.commands, view.toggle_context, view.toggle_results, help.toggle,
 # buffer.new, buffer.close, buffer.next, buffer.prev, buffer.reopen,
 # completion.trigger, completion.accept, completion.dismiss, completion.next,
 # completion.prev, help.scroll_up, help.scroll_down, help.page_up, help.page_down, and the
@@ -47,10 +48,7 @@
 "alt+t" = "buffer.reopen"
 "ctrl+o" = "connection.open"
 "alt+o" = "connection.reconnect"
-# Ctrl+Enter is not sent by many terminals, so F5 and Alt+Enter also run.
-"ctrl+enter" = "query.run_statement"
-"alt+enter" = "query.run_statement"
-"f5" = "query.run_statement"
+"ctrl+r" = "query.run_statement"
 # Cancels the running query. Does nothing when no query is running.
 "ctrl+c" = "query.cancel"
 
@@ -94,6 +92,8 @@
 "ctrl+insert" = "editor.copy"
 "ctrl+v" = "editor.paste"
 "shift+insert" = "editor.paste"
+# Esc leaves the editor for the commands pane, where single keys work.
+"esc" = "focus.commands"
 "ctrl+space" = "completion.trigger"
 "alt+/" = "completion.trigger"
 
@@ -106,9 +106,21 @@
 "up" = "completion.prev"
 
 [context]
+# This is the commands pane. It has focus when oxpecker starts, so a single
+# key is enough. Typing SQL happens in the editor, which never gives up letters.
+"c" = "connection.open"
+"r" = "query.run_statement"
+"e" = "focus.editor"
+"enter" = "focus.editor"
+"n" = "buffer.new"
+"q" = "app.quit"
 "?" = "help.toggle"
 
 [results]
+"c" = "connection.open"
+"r" = "query.run_statement"
+"e" = "focus.editor"
+"q" = "app.quit"
 "?" = "help.toggle"
 "up" = "results.scroll_up"
 "down" = "results.scroll_down"
@@ -129,6 +141,16 @@
 "backspace" = "dialog.backspace"
 "ctrl+u" = "dialog.clear"
 "ctrl+s" = "picker.save_profile"
+
+[form]
+"down" = "dialog.next"
+"tab" = "dialog.next"
+"up" = "dialog.prev"
+"shift+tab" = "dialog.prev"
+"enter" = "dialog.submit"
+"esc" = "dialog.cancel"
+"backspace" = "dialog.backspace"
+"ctrl+u" = "dialog.clear"
 
 [prompt]
 "enter" = "dialog.submit"

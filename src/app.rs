@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::db::{ConnId, ConnectionInfo};
 use crate::editor::{display_col, Buffer, EditCmd, Pos};
 use crate::events::{Background, Event};
+use crate::form::ConnectForm;
 use crate::keymap::{Action, KeyChord, Keymap, Scope};
 use crate::layout;
 use crate::picker::{self, Picker};
@@ -116,6 +117,8 @@ pub struct PasswordPrompt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dialog {
     Picker(Picker),
+    /// Connection details typed by hand.
+    Form(ConnectForm),
     Password(PasswordPrompt),
 }
 
@@ -195,7 +198,12 @@ impl State {
 
     pub fn new(config: &Config) -> Self {
         Self {
-            focus: Pane::Editor,
+            // Start on the commands pane: a single key connects (C).
+            focus: if config.ui.show_context_strip {
+                Pane::Context
+            } else {
+                Pane::Editor
+            },
             show_context: config.ui.show_context_strip,
             show_results: true,
             help_open: false,
@@ -219,10 +227,11 @@ impl State {
 
     /// Panes in the order focus cycles through them (top to bottom).
     pub fn visible_panes(&self) -> Vec<Pane> {
-        let mut panes = vec![Pane::Editor];
+        let mut panes = Vec::new();
         if self.show_context {
             panes.push(Pane::Context);
         }
+        panes.push(Pane::Editor);
         if self.show_results {
             panes.push(Pane::Results);
         }
@@ -400,21 +409,33 @@ impl App {
     /// The actions the hint bar advertises, most useful first.
     pub fn hint_actions(&self) -> &'static [Action] {
         if self.state.completion.is_some() {
-            &[
+            return &[
                 Action::CompletionAccept,
                 Action::CompletionNext,
                 Action::CompletionDismiss,
-            ]
-        } else {
-            &[
+            ];
+        }
+        match self.state.focus {
+            Pane::Editor => &[
                 Action::QueryRun,
+                Action::FocusCommands,
                 Action::ConnectionOpen,
-                Action::HelpToggle,
-                Action::FocusNext,
-                Action::AppQuit,
+            ],
+            Pane::Context => &[
+                Action::ConnectionOpen,
+                Action::QueryRun,
                 Action::FocusEditor,
-                Action::ToggleContext,
-            ]
+                Action::BufferNew,
+                Action::AppQuit,
+                Action::HelpToggle,
+            ],
+            Pane::Results => &[
+                Action::ConnectionOpen,
+                Action::QueryRun,
+                Action::FocusEditor,
+                Action::AppQuit,
+                Action::HelpToggle,
+            ],
         }
     }
 
@@ -573,7 +594,7 @@ impl App {
         match action {
             Action::AppQuit => self.state.quit = true,
             Action::FocusEditor => self.state.focus = Pane::Editor,
-            Action::FocusContext => {
+            Action::FocusContext | Action::FocusCommands => {
                 self.state.show_context = true;
                 self.state.focus = Pane::Context;
             }
@@ -669,6 +690,13 @@ impl App {
 
     // -- connections ----------------------------------------------------------
 
+    /// The label of this buffer's connection when it can be reconnected.
+    fn reconnect_label(&self) -> Option<String> {
+        let conn = self.state.connection(self.state.doc().connection?)?;
+        matches!(conn.status, ConnStatus::Failed(_) | ConnStatus::Closed(_))
+            .then(|| conn.label().to_string())
+    }
+
     fn open_picker(&mut self) {
         self.state.help_open = false;
         self.state.completion = None;
@@ -748,6 +776,7 @@ impl App {
     fn on_dialog_key(&mut self, chord: KeyChord) {
         let scope = match self.state.dialog {
             Some(Dialog::Picker(_)) => Scope::Picker,
+            Some(Dialog::Form(_)) => Scope::Form,
             Some(Dialog::Password(_)) => Scope::Prompt,
             None => return,
         };
@@ -765,6 +794,7 @@ impl App {
     fn dialog_type(&mut self, c: char) {
         match &mut self.state.dialog {
             Some(Dialog::Picker(p)) => p.push(c),
+            Some(Dialog::Form(f)) => f.type_char(c),
             Some(Dialog::Password(p)) => {
                 p.input = Secret::new(format!("{}{c}", p.input.expose()));
                 p.error = None;
@@ -774,25 +804,34 @@ impl App {
     }
 
     fn dialog_action(&mut self, action: Action) {
+        let reconnect = self.reconnect_label();
         let profiles = &self.state.profiles;
         match (action, &mut self.state.dialog) {
             (Action::DialogNext, Some(Dialog::Picker(p))) => {
-                let count = p.items(profiles).len();
+                let count = p.items(profiles, reconnect.as_deref()).len();
                 p.select_next(count);
             }
             (Action::DialogPrev, Some(Dialog::Picker(p))) => {
-                let count = p.items(profiles).len();
+                let count = p.items(profiles, reconnect.as_deref()).len();
                 p.select_previous(count);
             }
+            (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
+            (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
             (Action::DialogBackspace, Some(Dialog::Picker(p))) => p.backspace(),
+            (Action::DialogBackspace, Some(Dialog::Form(f))) => f.backspace(),
             (Action::DialogBackspace, Some(Dialog::Password(p))) => {
                 let mut text = p.input.expose().to_string();
                 text.pop();
                 p.input = Secret::new(text);
             }
             (Action::DialogClear, Some(Dialog::Picker(p))) => p.clear(),
+            (Action::DialogClear, Some(Dialog::Form(f))) => f.clear(),
             (Action::DialogClear, Some(Dialog::Password(p))) => p.input = Secret::new(""),
             (Action::DialogCancel, Some(Dialog::Picker(_))) => self.state.dialog = None,
+            // Esc in the form goes back to the list.
+            (Action::DialogCancel, Some(Dialog::Form(_))) => {
+                self.state.dialog = Some(Dialog::Picker(Picker::default()));
+            }
             (Action::DialogCancel, Some(Dialog::Password(p))) => {
                 let conn = p.conn;
                 self.state.dialog = None;
@@ -800,23 +839,59 @@ impl App {
                 self.notice("Connection cancelled");
             }
             (Action::DialogSubmit, Some(Dialog::Picker(_))) => self.submit_picker(),
+            (Action::DialogSubmit, Some(Dialog::Form(_))) => self.submit_form(),
             (Action::DialogSubmit, Some(Dialog::Password(_))) => self.submit_password(),
             (Action::PickerSaveProfile, Some(Dialog::Picker(_))) => self.save_uri_as_profile(),
             _ => {}
         }
     }
 
+    fn submit_form(&mut self) {
+        let Some(Dialog::Form(form)) = &self.state.dialog else {
+            return;
+        };
+        let form = form.clone();
+        let profile = match form.build() {
+            Ok(profile) => profile,
+            Err(message) => return self.set_form_error(message),
+        };
+        if !form.name.trim().is_empty() {
+            if let Err(message) = self.state.profiles.add(profile.clone()) {
+                return self.set_form_error(message);
+            }
+            self.pending.push(Command::SaveProfiles {
+                contents: self.state.profiles.to_toml(),
+            });
+        }
+        self.connect(profile, None);
+    }
+
+    fn set_form_error(&mut self, message: String) {
+        if let Some(Dialog::Form(form)) = &mut self.state.dialog {
+            form.error = Some(message);
+        }
+    }
+
     fn submit_picker(&mut self) {
+        let reconnect = self.reconnect_label();
         let Some(Dialog::Picker(picker)) = &self.state.dialog else {
             return;
         };
-        match picker.current(&self.state.profiles) {
+        match picker.current(&self.state.profiles, reconnect.as_deref()) {
             Some(picker::Item::Uri(text)) => match profile::parse_uri(&text) {
                 Ok(uri) => self.connect(uri.profile, uri.password),
                 Err(message) => self.notice(format!("Invalid connection URI: {message}")),
             },
             Some(picker::Item::Profile(name)) => self.connect_to_saved(&name),
-            None => self.notice("No profile matches. Type a postgres:// URI to connect directly"),
+            Some(picker::Item::Reconnect(_)) => {
+                self.state.dialog = None;
+                self.reconnect();
+            }
+            Some(picker::Item::New) => {
+                let user = crate::runtime::default_user();
+                self.state.dialog = Some(Dialog::Form(ConnectForm::new(&user)));
+            }
+            None => {}
         }
     }
 
@@ -930,6 +1005,10 @@ impl App {
                 );
                 c.info = Some(info);
                 self.notice(text);
+                // Ready to write SQL: move from the commands pane to the editor.
+                if self.state.doc().connection == Some(conn) && self.state.focus == Pane::Context {
+                    self.state.focus = Pane::Editor;
+                }
             }
             Background::ConnectFailed { conn, error } => {
                 if self.state.connection(conn).is_none() {
@@ -1106,8 +1185,12 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    /// An app already focused on the editor, so most tests can type at once.
+    /// The real starting state is covered by the landing tests.
     fn app_with(config: Config) -> App {
-        App::new(config, Keymap::default_keymap())
+        let mut app = App::new(config, Keymap::default_keymap());
+        app.state.focus = Pane::Editor;
+        app
     }
 
     fn app() -> App {
@@ -1147,7 +1230,7 @@ mod tests {
         assert_eq!(a.state.focus, Pane::Editor);
         assert_eq!(a.state.editor().text(), "    ");
         press(&mut a, KeyCode::F(6), KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Context, "F6 always leaves the editor");
+        assert_eq!(a.state.focus, Pane::Results, "F6 always leaves the editor");
     }
 
     #[test]
@@ -1155,14 +1238,15 @@ mod tests {
         let mut config = Config::default();
         config.editor.tab_indent = false;
         let mut a = app_with(config);
+        // Panes run top to bottom: Context, Editor, Results.
+        press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(a.state.focus, Pane::Results);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Context);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Results);
-        press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Editor);
         press(&mut a, KeyCode::BackTab, KeyModifiers::SHIFT);
-        assert_eq!(a.state.focus, Pane::Results);
+        assert_eq!(a.state.focus, Pane::Context);
     }
 
     #[test]
@@ -1170,7 +1254,7 @@ mod tests {
         let mut a = app();
         alt(&mut a, '1');
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Results);
+        assert_eq!(a.state.focus, Pane::Editor);
     }
 
     #[test]
@@ -1247,7 +1331,8 @@ mod tests {
         let mut a = app();
         alt(&mut a, '3');
         let before = a.state.clone();
-        for c in ['q', 'j', 'x', ' '] {
+        // Keys with no meaning in the results pane. (c, r, e, q and ? do have one.)
+        for c in ['j', 'x', 'z', ' '] {
             press(&mut a, KeyCode::Char(c), KeyModifiers::NONE);
         }
         assert_eq!(a.state, before);
@@ -1737,7 +1822,8 @@ mod tests {
         );
         assert!(a.hint_actions().contains(&Action::CompletionDismiss));
         esc(&mut a);
-        assert!(a.hint_actions().contains(&Action::HelpToggle));
+        assert!(a.hint_actions().contains(&Action::QueryRun));
+        assert!(a.hint_actions().contains(&Action::FocusCommands));
     }
 
     #[test]
@@ -1805,6 +1891,7 @@ mod tests {
     use crate::command::Command;
     use crate::db::{ConnectionInfo, DbError, QueryOutput, ResultSet};
     use crate::events::Background;
+    use crate::form::ConnectForm;
     use std::time::Duration;
 
     fn send(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Vec<Command> {
@@ -1971,16 +2058,15 @@ mod tests {
     }
 
     #[test]
-    fn no_match_gives_a_message_and_connects_nothing() {
+    fn no_match_still_offers_a_new_connection() {
         let mut a = app();
         open_picker(&mut a);
         type_into(&mut a, "zzz");
         assert!(send(&mut a, KeyCode::Enter, KeyModifiers::NONE).is_empty());
-        assert!(a
-            .state
-            .notice
-            .as_deref()
-            .is_some_and(|n| n.contains("No profile matches")));
+        assert!(
+            matches!(a.state.dialog, Some(Dialog::Form(_))),
+            "Enter opens the details form"
+        );
     }
 
     #[test]
@@ -2113,11 +2199,11 @@ mod tests {
     }
 
     fn press_run(app: &mut App) -> Vec<Command> {
-        send(app, KeyCode::F(5), KeyModifiers::NONE)
+        send(app, KeyCode::Char('r'), KeyModifiers::CONTROL)
     }
 
     #[test]
-    fn f5_runs_the_statement_under_the_cursor() {
+    fn ctrl_r_runs_the_statement_under_the_cursor() {
         let mut a = app();
         let conn = connected(&mut a);
         a.update(Event::Paste("select 1;\nselect 2;\nselect 3".to_string()));
@@ -2131,20 +2217,38 @@ mod tests {
     }
 
     #[test]
-    fn every_run_key_works() {
-        for (code, mods) in [
-            (KeyCode::F(5), KeyModifiers::NONE),
-            (KeyCode::Enter, KeyModifiers::CONTROL),
-            (KeyCode::Enter, KeyModifiers::ALT),
-        ] {
+    fn run_works_from_the_editor_and_by_a_single_key_elsewhere() {
+        // Ctrl+R in the editor.
+        let mut a = app();
+        connected(&mut a);
+        type_into(&mut a, "select 1");
+        assert!(matches!(press_run(&mut a)[..], [Command::Run { .. }]));
+
+        // `r` in the commands pane and in the results pane.
+        for pane_key in ['1', '3'] {
             let mut a = app();
             connected(&mut a);
             type_into(&mut a, "select 1");
-            let commands = send(&mut a, code, mods);
+            alt(&mut a, pane_key);
+            let commands = send(&mut a, KeyCode::Char('r'), KeyModifiers::NONE);
             assert!(
                 matches!(commands[..], [Command::Run { .. }]),
-                "{code:?} {mods:?}"
+                "r in pane {pane_key}"
             );
+        }
+    }
+
+    #[test]
+    fn old_run_keys_are_not_bound_by_default() {
+        let mut a = app();
+        connected(&mut a);
+        type_into(&mut a, "select 1");
+        for (code, mods) in [
+            (KeyCode::F(5), KeyModifiers::NONE),
+            (KeyCode::Enter, KeyModifiers::ALT),
+        ] {
+            let commands = send(&mut a, code, mods);
+            assert!(commands.is_empty(), "{code:?} {mods:?}");
         }
     }
 
@@ -2577,5 +2681,381 @@ mod tests {
         let before = a.state.clone();
         assert!(a.update(Event::Tick).is_empty());
         assert_eq!(a.state, before);
+    }
+
+    // -- the landing screen and single keys ------------------------------------
+
+    /// The app exactly as a user finds it at startup.
+    fn landing() -> App {
+        let mut a = App::new(Config::default(), Keymap::default_keymap());
+        a.update(Event::Resize(100, 30));
+        a
+    }
+
+    fn key(app: &mut App, c: char) -> Vec<Command> {
+        send(app, KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn oxpecker_starts_on_the_commands_pane() {
+        let a = landing();
+        assert_eq!(a.state.focus, Pane::Context);
+        assert!(a.state.dialog.is_none());
+    }
+
+    #[test]
+    fn without_the_context_pane_it_starts_in_the_editor() {
+        let mut config = Config::default();
+        config.ui.show_context_strip = false;
+        let a = App::new(config, Keymap::default_keymap());
+        assert_eq!(a.state.focus, Pane::Editor);
+    }
+
+    #[test]
+    fn c_opens_the_connect_window_and_nothing_else_is_needed() {
+        let mut a = landing();
+        key(&mut a, 'c');
+        assert!(matches!(a.state.dialog, Some(Dialog::Picker(_))));
+    }
+
+    #[test]
+    fn letters_at_the_landing_screen_never_end_up_in_the_buffer() {
+        let mut a = landing();
+        for c in ['j', 'k', 'x', 'z', 'w', 'a'] {
+            key(&mut a, c);
+        }
+        assert_eq!(a.state.editor().text(), "");
+        assert_eq!(a.state.focus, Pane::Context);
+    }
+
+    #[test]
+    fn q_quits_from_the_commands_pane_but_is_just_a_letter_in_the_editor() {
+        let mut a = landing();
+        key(&mut a, 'q');
+        assert!(a.state.quit);
+
+        let mut a = landing();
+        key(&mut a, 'e');
+        key(&mut a, 'q');
+        assert!(!a.state.quit);
+        assert_eq!(a.state.editor().text(), "q");
+    }
+
+    #[test]
+    fn e_and_enter_go_to_the_editor() {
+        for code in [KeyCode::Char('e'), KeyCode::Enter] {
+            let mut a = landing();
+            send(&mut a, code, KeyModifiers::NONE);
+            assert_eq!(a.state.focus, Pane::Editor, "{code:?}");
+            assert_eq!(a.state.editor().text(), "", "the key itself is not typed");
+        }
+    }
+
+    #[test]
+    fn n_opens_a_new_buffer_and_moves_to_it() {
+        let mut a = landing();
+        key(&mut a, 'n');
+        assert_eq!(a.state.docs.len(), 2);
+        assert_eq!(a.state.focus, Pane::Editor);
+    }
+
+    #[test]
+    fn question_mark_opens_help_at_the_landing_screen() {
+        let mut a = landing();
+        key(&mut a, '?');
+        assert!(a.state.help_open);
+    }
+
+    #[test]
+    fn escape_leaves_the_editor_and_e_comes_back_with_the_text_intact() {
+        let mut a = landing();
+        key(&mut a, 'e');
+        type_into(&mut a, "select 1");
+        esc(&mut a);
+        assert_eq!(a.state.focus, Pane::Context);
+        key(&mut a, 'e');
+        assert_eq!(a.state.focus, Pane::Editor);
+        assert_eq!(a.state.editor().text(), "select 1");
+    }
+
+    #[test]
+    fn escape_first_closes_a_suggestion_popup_and_only_then_leaves() {
+        let mut a = landing();
+        key(&mut a, 'e');
+        type_into(&mut a, "sel");
+        assert!(a.state.completion.is_some());
+        esc(&mut a);
+        assert_eq!(
+            (a.state.focus, a.state.completion.is_some()),
+            (Pane::Editor, false)
+        );
+        esc(&mut a);
+        assert_eq!(a.state.focus, Pane::Context);
+    }
+
+    #[test]
+    fn escape_shows_the_commands_pane_even_when_it_was_hidden() {
+        let mut a = app();
+        press(&mut a, KeyCode::F(3), KeyModifiers::NONE);
+        assert!(!a.state.show_context);
+        esc(&mut a);
+        assert!(a.state.show_context);
+        assert_eq!(a.state.focus, Pane::Context);
+    }
+
+    #[test]
+    fn the_results_pane_has_a_few_single_keys_too() {
+        let mut a = landing();
+        alt(&mut a, '3');
+        key(&mut a, 'c');
+        assert!(matches!(a.state.dialog, Some(Dialog::Picker(_))));
+        esc(&mut a);
+        key(&mut a, 'e');
+        assert_eq!(a.state.focus, Pane::Editor);
+        alt(&mut a, '3');
+        key(&mut a, 'q');
+        assert!(a.state.quit);
+    }
+
+    #[test]
+    fn connecting_moves_you_to_the_editor() {
+        let mut a = landing();
+        key(&mut a, 'c');
+        type_into(&mut a, "postgres://alice:pw@127.0.0.1/app");
+        let Command::Connect { conn, .. } =
+            send(&mut a, KeyCode::Enter, KeyModifiers::NONE)[0].clone()
+        else {
+            panic!("connect")
+        };
+        assert_eq!(
+            a.state.focus,
+            Pane::Context,
+            "still on the commands pane while connecting"
+        );
+        a.update(Event::Background(Background::Connected {
+            conn,
+            info: info(),
+        }));
+        assert_eq!(a.state.focus, Pane::Editor);
+    }
+
+    #[test]
+    fn a_failed_connection_keeps_you_on_the_commands_pane() {
+        let mut a = landing();
+        key(&mut a, 'c');
+        type_into(&mut a, "postgres://alice:pw@127.0.0.1/app");
+        let Command::Connect { conn, .. } =
+            send(&mut a, KeyCode::Enter, KeyModifiers::NONE)[0].clone()
+        else {
+            panic!("connect")
+        };
+        a.update(Event::Background(Background::ConnectFailed {
+            conn,
+            error: DbError::new("refused"),
+        }));
+        assert_eq!(a.state.focus, Pane::Context);
+    }
+
+    #[test]
+    fn hints_follow_the_focus() {
+        let mut a = landing();
+        assert!(a.hint_actions().contains(&Action::ConnectionOpen));
+        assert_eq!(
+            a.hint_key(Action::ConnectionOpen)
+                .map(|k| k.to_string())
+                .as_deref(),
+            Some("c")
+        );
+        key(&mut a, 'e');
+        assert_eq!(a.hint_actions()[0], Action::QueryRun);
+        assert_eq!(
+            a.hint_key(Action::QueryRun)
+                .map(|k| k.to_string())
+                .as_deref(),
+            Some("Ctrl+R")
+        );
+        assert_eq!(
+            a.hint_key(Action::FocusCommands)
+                .map(|k| k.to_string())
+                .as_deref(),
+            Some("Esc")
+        );
+    }
+
+    // -- the connect window ----------------------------------------------------
+
+    fn open_form(app: &mut App) {
+        key(app, 'c');
+        // With no saved profiles the only item is "New connection".
+        send(app, KeyCode::Enter, KeyModifiers::NONE);
+    }
+
+    fn form(app: &App) -> &ConnectForm {
+        match &app.state.dialog {
+            Some(Dialog::Form(f)) => f,
+            other => panic!("expected the form, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_first_choice_with_no_profiles_is_a_new_connection() {
+        let mut a = landing();
+        open_form(&mut a);
+        assert_eq!(form(&a).host, "localhost");
+        assert_eq!(form(&a).port, "5432");
+    }
+
+    #[test]
+    fn filling_the_form_connects_and_then_asks_for_the_password() {
+        let mut a = landing();
+        open_form(&mut a);
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL); // clear host
+        type_into(&mut a, "db.example.com");
+        send(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        type_into(&mut a, "6432");
+        send(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        type_into(&mut a, "sales");
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let [Command::Connect {
+            profile,
+            password,
+            lookup,
+            ..
+        }] = &commands[..]
+        else {
+            panic!("{commands:?}")
+        };
+        assert_eq!(
+            (profile.host.as_str(), profile.port),
+            ("db.example.com", 6432)
+        );
+        assert_eq!(profile.database.as_deref(), Some("sales"));
+        assert!(
+            password.is_none() && *lookup,
+            "the password is looked up, then asked"
+        );
+        assert!(
+            a.state.profiles.is_empty(),
+            "nothing is saved without a name"
+        );
+    }
+
+    #[test]
+    fn a_name_saves_the_profile_without_any_password() {
+        let mut a = landing();
+        open_form(&mut a);
+        for _ in 0..4 {
+            send(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        }
+        type_into(&mut a, "Local dev");
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(
+            &commands[..],
+            [Command::SaveProfiles { .. }, Command::Connect { .. }]
+        ));
+        let Some(Command::SaveProfiles { contents }) = commands.first() else {
+            panic!()
+        };
+        assert!(contents.contains("Local dev") && !contents.to_lowercase().contains("password ="));
+        assert!(a.state.profiles.get("Local dev").is_some());
+    }
+
+    #[test]
+    fn the_production_switch_marks_the_profile() {
+        let mut a = landing();
+        open_form(&mut a);
+        send(&mut a, KeyCode::BackTab, KeyModifiers::SHIFT); // wraps to the last field
+        send(&mut a, KeyCode::Char(' '), KeyModifiers::NONE);
+        assert!(form(&a).production);
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let [Command::Connect { profile, .. }] = &commands[..] else {
+            panic!("{commands:?}")
+        };
+        assert!(profile.production);
+    }
+
+    #[test]
+    fn a_bad_port_stays_in_the_form_with_a_message() {
+        let mut a = landing();
+        open_form(&mut a);
+        send(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        type_into(&mut a, "abc");
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(commands.is_empty());
+        assert!(form(&a)
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("port")));
+        type_into(&mut a, "1");
+        assert_eq!(form(&a).error, None, "typing clears the message");
+    }
+
+    #[test]
+    fn a_name_that_is_taken_is_refused_in_the_form() {
+        let mut a = landing();
+        a.state.profiles.add(Profile::new("taken")).expect("add");
+        key(&mut a, 'c');
+        send(&mut a, KeyCode::Down, KeyModifiers::NONE); // past "taken" to "New connection"
+        send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        for _ in 0..4 {
+            send(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        }
+        type_into(&mut a, "taken");
+        assert!(send(&mut a, KeyCode::Enter, KeyModifiers::NONE).is_empty());
+        assert!(form(&a)
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("already exists")));
+    }
+
+    #[test]
+    fn escape_in_the_form_goes_back_to_the_list() {
+        let mut a = landing();
+        open_form(&mut a);
+        esc(&mut a);
+        assert!(matches!(a.state.dialog, Some(Dialog::Picker(_))));
+        esc(&mut a);
+        assert!(a.state.dialog.is_none());
+    }
+
+    #[test]
+    fn the_form_takes_every_key() {
+        let mut a = landing();
+        open_form(&mut a);
+        type_into(&mut a, "q");
+        assert!(!a.state.quit);
+        assert_eq!(a.state.editor().text(), "");
+        assert!(form(&a).host.ends_with('q'));
+    }
+
+    #[test]
+    fn saved_profiles_come_before_new_connection_and_enter_picks_the_first() {
+        let mut a = landing();
+        a.state.profiles.add(Profile::new("alpha")).expect("add");
+        key(&mut a, 'c');
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(
+            matches!(commands.last(), Some(Command::Connect { profile, .. }) if profile.name == "alpha")
+        );
+    }
+
+    #[test]
+    fn a_lost_connection_is_offered_for_reconnecting_from_the_connect_window() {
+        let mut a = landing();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::ConnectionClosed {
+            conn,
+            reason: "gone".to_string(),
+        }));
+        esc(&mut a);
+        key(&mut a, 'c');
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(
+            matches!(&commands[..], [Command::Connect { conn: c, lookup: true, .. }] if *c == conn),
+            "{commands:?}"
+        );
+        assert!(a.state.dialog.is_none());
     }
 }

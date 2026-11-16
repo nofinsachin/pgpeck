@@ -197,13 +197,13 @@ impl Config {
 fn parse_sources(value: &toml::Value) -> Result<Vec<Source>, &'static str> {
     let names = value
         .as_array()
-        .ok_or("expected a list such as [\"keychain\", \"env\"]")?;
+        .ok_or("expected a list such as [\"env\", \"prompt\"]")?;
     let mut sources = Vec::new();
     for name in names {
         let source = name
             .as_str()
             .and_then(Source::from_name)
-            .ok_or("each entry must be one of keychain, pgpass, env, prompt")?;
+            .ok_or("each entry must be one of pgpass, env, prompt")?;
         if sources.contains(&source) {
             return Err("each source can be listed only once");
         }
@@ -293,7 +293,13 @@ mod tests {
 
     #[test]
     fn bad_password_sources_keep_the_default() {
-        for bad in ["[\"vault\"]", "[]", "[\"env\", \"env\"]", "\"env\"", "[1]"] {
+        for bad in [
+            "[\"keychain\"]",
+            "[]",
+            "[\"env\", \"env\"]",
+            "\"env\"",
+            "[1]",
+        ] {
             let (config, diags) =
                 Config::parse(&format!("[connections]\npassword_sources = {bad}\n"));
             assert_eq!(

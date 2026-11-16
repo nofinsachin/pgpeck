@@ -1,30 +1,30 @@
-┌ Editor ──────────────────────────────────────────────────────────────────────────────────────────┐
-│1                                                                                                 │
-│            ┌───────────────────────────────── Help ─────────────────────────────────┐            │
+┌ Context ─────────────────────────────────────────────────────────────────────────────────────────┐
+│Welcome to oxpecker. Press C to connect to a database.                                            │
+│Press (unbou┌───────────────────────────────── Help ─────────────────────────────────┐            │
 │            │results keys                                                            │            │
 │            │  ?                 help                  help.toggle                   │            │
-│            │  Down              row down              results.scroll_down           │            │
-│            │  End               last row              results.last_row              │            │
-│            │  Home              first row             results.first_row             │            │
+└────────────│  Down              row down              results.scroll_down           │────────────┘
+┌ Editor ────│  End               last row              results.last_row              │────────────┐
+│1           │  Home              first row             results.first_row             │            │
 │            │  Left              columns left          results.scroll_left           │            │
-└────────────│  PageDown          page down             results.page_down             │────────────┘
-┌ Context ───│  PageUp            page up               results.page_up               │────────────┐
-│Not connecte│  Right             columns right         results.scroll_right          │            │
+│            │  PageDown          page down             results.page_down             │            │
+│            │  PageUp            page up               results.page_up               │            │
+│            │  Right             columns right         results.scroll_right          │            │
 │            │  Up                row up                results.scroll_up             │            │
 │            │  [                 previous result       results.prev_tab              │            │
 │            │  ]                 next result           results.next_tab              │            │
+│            │  c                 connect               connection.open               │            │
+└────────────│  e                 edit                  focus.editor                  │────────────┘
+┌ ▶ Results ─│  q                 quit                  app.quit                      │────────────┐
+│No results y│  r                 run                   query.run_statement           │            │
 │            │                                                                        │            │
-└────────────│global keys                                                             │────────────┘
-┌ ▶ Results ─│  Alt+1             focus context         focus.context                 │────────────┐
-│No results y│  Alt+2             focus editor          focus.editor                  │            │
+│            │global keys                                                             │            │
+│            │  Alt+1             focus context         focus.context                 │            │
+│            │  Alt+2             edit                  focus.editor                  │            │
 │            │  Alt+3             focus results         focus.results                 │            │
-│            │  Alt+Enter         run statement         query.run_statement           │            │
 │            │  Alt+Left          previous buffer       buffer.prev                   │            │
 │            │  Alt+O             reconnect             connection.reconnect          │            │
 │            │  Alt+Right         next buffer           buffer.next                   │            │
-│            │  Alt+T             reopen closed buffer  buffer.reopen                 │            │
-│            │  Ctrl+1            focus context         focus.context                 │            │
-│            │  Ctrl+2            focus editor          focus.editor                  │            │
-└────────────└─────────────────── Up/Down scroll  ? close  (1/19) ────────────────────┘────────────┘
-F5 run statement  Ctrl+O connect  ? help  F6 next pane  Ctrl+Q quit  Alt+2 focus editor
+└────────────└─────────────────── Up/Down scroll  ? close  (1/21) ────────────────────┘────────────┘
+C connect  R run  E edit  Q quit  ? help
  no connection │ focus: Results │ Ln 1, Col 1

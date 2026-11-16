@@ -14,8 +14,12 @@ pub struct Picker {
 pub enum Item {
     /// The text typed so far, used as a connection URI.
     Uri(String),
+    /// Connect again to the connection that was lost or failed.
+    Reconnect(String),
     /// A saved profile, by name.
     Profile(String),
+    /// Opens the form for typing the details by hand.
+    New,
 }
 
 pub fn looks_like_uri(text: &str) -> bool {
@@ -49,15 +53,19 @@ impl Picker {
         self.selected = 0;
     }
 
-    /// Items in display order. Without a query, profiles come most recently
-    /// used first. With one, best match first.
-    pub fn items(&self, profiles: &Profiles) -> Vec<Item> {
-        let mut items = Vec::new();
+    /// Items in display order: a way back to the lost connection, then saved
+    /// profiles (best match, or most recent, first), then "New connection".
+    /// A typed address replaces them all. `reconnect` is the label of the
+    /// connection that can be reconnected, if any.
+    pub fn items(&self, profiles: &Profiles, reconnect: Option<&str>) -> Vec<Item> {
         if looks_like_uri(&self.input) {
-            items.push(Item::Uri(self.input.clone()));
-            return items;
+            return vec![Item::Uri(self.input.clone())];
         }
         let query = self.input.trim();
+        let mut items = Vec::new();
+        if let (Some(label), true) = (reconnect, query.is_empty()) {
+            items.push(Item::Reconnect(label.to_string()));
+        }
         let mut scored: Vec<(i64, &Profile)> = profiles
             .for_picker()
             .into_iter()
@@ -78,6 +86,7 @@ impl Picker {
                 .into_iter()
                 .map(|(_, p)| Item::Profile(p.name.clone())),
         );
+        items.push(Item::New);
         items
     }
 
@@ -94,8 +103,10 @@ impl Picker {
     }
 
     /// The item Enter would act on.
-    pub fn current(&self, profiles: &Profiles) -> Option<Item> {
-        self.items(profiles).into_iter().nth(self.selected)
+    pub fn current(&self, profiles: &Profiles, reconnect: Option<&str>) -> Option<Item> {
+        self.items(profiles, reconnect)
+            .into_iter()
+            .nth(self.selected)
     }
 }
 
@@ -118,12 +129,14 @@ mod tests {
         profiles
     }
 
-    fn names(items: &[Item]) -> Vec<&str> {
+    fn names(items: &[Item]) -> Vec<String> {
         items
             .iter()
             .map(|i| match i {
-                Item::Profile(n) => n.as_str(),
-                Item::Uri(_) => "<uri>",
+                Item::Profile(n) => n.clone(),
+                Item::Uri(_) => "<uri>".to_string(),
+                Item::Reconnect(l) => format!("<reconnect {l}>"),
+                Item::New => "<new>".to_string(),
             })
             .collect()
     }
@@ -135,19 +148,35 @@ mod tests {
     }
 
     #[test]
-    fn without_a_query_all_profiles_are_listed_recent_first() {
+    fn without_a_query_profiles_come_recent_first_then_new_connection() {
         let mut profiles = profiles();
         profiles.touch("staging", 100);
-        let items = Picker::default().items(&profiles);
-        assert_eq!(names(&items), ["staging", "local-dev", "production"]);
+        let items = Picker::default().items(&profiles, None);
+        assert_eq!(
+            names(&items),
+            ["staging", "local-dev", "production", "<new>"]
+        );
     }
 
     #[test]
-    fn the_query_filters_and_ranks() {
+    fn with_no_profiles_the_only_choice_is_a_new_connection() {
+        let picker = Picker::default();
+        assert_eq!(names(&picker.items(&Profiles::default(), None)), ["<new>"]);
+        assert_eq!(picker.current(&Profiles::default(), None), Some(Item::New));
+    }
+
+    #[test]
+    fn the_query_filters_and_ranks_and_new_connection_stays_last() {
         let profiles = profiles();
-        assert_eq!(names(&typed("prod").items(&profiles)), ["production"]);
-        assert_eq!(names(&typed("stg").items(&profiles)), ["staging"]);
-        assert_eq!(names(&typed("zzz").items(&profiles)), Vec::<&str>::new());
+        assert_eq!(
+            names(&typed("prod").items(&profiles, None)),
+            ["production", "<new>"]
+        );
+        assert_eq!(
+            names(&typed("stg").items(&profiles, None)),
+            ["staging", "<new>"]
+        );
+        assert_eq!(names(&typed("zzz").items(&profiles, None)), ["<new>"]);
     }
 
     #[test]
@@ -157,9 +186,15 @@ mod tests {
         p.user = Some("reporting".to_string());
         p.host = "reports.internal".to_string();
         profiles.add(p).expect("add");
-        assert_eq!(names(&typed("reporting").items(&profiles)), ["misc"]);
-        assert_eq!(names(&typed("localhost").items(&profiles)), ["local-dev"]);
-        assert!(names(&typed("example").items(&profiles)).contains(&"production"));
+        assert_eq!(
+            names(&typed("reporting").items(&profiles, None)),
+            ["misc", "<new>"]
+        );
+        assert_eq!(
+            names(&typed("localhost").items(&profiles, None)),
+            ["local-dev", "<new>"]
+        );
+        assert!(names(&typed("example").items(&profiles, None)).contains(&"production".to_string()));
     }
 
     #[test]
@@ -168,18 +203,32 @@ mod tests {
         let mut p = Profile::new("p1");
         p.label = Some("Billing replica".to_string());
         profiles.add(p).expect("add");
-        assert_eq!(names(&typed("billing").items(&profiles)), ["p1"]);
+        assert_eq!(
+            names(&typed("billing").items(&profiles, None)),
+            ["p1", "<new>"]
+        );
     }
 
     #[test]
     fn a_typed_uri_is_the_only_item() {
         let picker = typed("postgres://u@h/d");
         assert_eq!(
-            picker.items(&profiles()),
+            picker.items(&profiles(), None),
             [Item::Uri("postgres://u@h/d".to_string())]
         );
         assert!(looks_like_uri("postgresql://x"));
         assert!(!looks_like_uri("postgres"));
+    }
+
+    #[test]
+    fn a_lost_connection_is_offered_first_but_only_before_typing() {
+        let profiles = profiles();
+        let items = Picker::default().items(&profiles, Some("prod-db"));
+        assert_eq!(names(&items)[0], "<reconnect prod-db>");
+        assert_eq!(
+            names(&typed("stg").items(&profiles, Some("prod-db"))),
+            ["staging", "<new>"]
+        );
     }
 
     #[test]
@@ -213,11 +262,11 @@ mod tests {
     fn current_follows_the_selection() {
         let profiles = profiles();
         let mut picker = Picker::default();
-        picker.select_next(3);
+        picker.select_next(4);
         assert_eq!(
-            picker.current(&profiles),
+            picker.current(&profiles, None),
             Some(Item::Profile("production".to_string()))
         );
-        assert_eq!(typed("zzz").current(&profiles), None);
+        assert_eq!(typed("zzz").current(&profiles, None), Some(Item::New));
     }
 }

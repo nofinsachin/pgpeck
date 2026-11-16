@@ -1,4 +1,5 @@
-//! Connection profiles (R1): everything needed to connect except the password.
+//! Connection profiles (R1): everything needed to connect except the password,
+//! which oxpecker never stores.
 //!
 //! Profiles live in `connections.toml` in the config directory, one table per
 //! profile. The file is written with owner-only permissions (R2.6). Entries
@@ -105,18 +106,6 @@ impl Profile {
             .unwrap_or(&self.name)
     }
 
-    /// Key for the OS keychain: it identifies the server and login, not the
-    /// profile name, so renaming a profile keeps its password.
-    pub fn keychain_account(&self) -> String {
-        format!(
-            "{}@{}:{}/{}",
-            self.user.as_deref().unwrap_or(""),
-            self.host,
-            self.port,
-            self.database.as_deref().unwrap_or("")
-        )
-    }
-
     /// The details a password lookup needs. `fallback_user` is the OS login
     /// name, used when the profile names no user.
     pub fn target(&self, fallback_user: &str) -> Target {
@@ -126,7 +115,6 @@ impl Profile {
             .unwrap_or_else(|| fallback_user.to_string());
         let database = self.database.clone().unwrap_or_else(|| user.clone());
         Target {
-            account: self.keychain_account(),
             host: self.host.clone(),
             port: self.port,
             database,
@@ -622,14 +610,6 @@ mod tests {
         let mut p = Profile::new("x");
         p.label = Some(String::new());
         assert_eq!(p.display_name(), "x");
-    }
-
-    #[test]
-    fn keychain_account_identifies_the_login_not_the_profile() {
-        let mut p = full();
-        assert_eq!(p.keychain_account(), "alice@db.example.com:6432/app");
-        p.name = "renamed".to_string();
-        assert_eq!(p.keychain_account(), "alice@db.example.com:6432/app");
     }
 
     #[test]
