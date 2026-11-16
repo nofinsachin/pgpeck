@@ -56,13 +56,23 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
 
 /// Focus shows as a marker and bold title as well as color (R20.9).
 fn pane_block<'a>(app: &App, theme: &Theme, pane: Pane) -> Block<'a> {
-    let (title, style) = if app.state.focus == pane {
+    let st = &app.state;
+    let mut label = pane.label().to_string();
+    if pane == Pane::Editor && st.docs.len() > 1 {
+        label = format!(
+            "{label}: {} ({}/{})",
+            st.doc().name,
+            st.active + 1,
+            st.docs.len()
+        );
+    }
+    let (title, style) = if st.focus == pane {
         (
-            format!(" ▶ {} ", pane.label()),
+            format!(" ▶ {label} "),
             Style::new().fg(theme.focus).add_modifier(Modifier::BOLD),
         )
     } else {
-        (format!(" {} ", pane.label()), Style::new().fg(theme.dimmed))
+        (format!(" {label} "), Style::new().fg(theme.dimmed))
     };
     Block::bordered()
         .title(title)
@@ -128,7 +138,7 @@ impl<'a> SpanBuilder<'a> {
 
 fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
     let st = &app.state;
-    let buffer = &st.editor;
+    let buffer = st.editor();
     frame.render_widget(pane_block(app, theme, Pane::Editor), pane);
 
     let area = layout::editor_area(pane, buffer.line_count());
@@ -140,7 +150,7 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
     let selection = buffer.selection();
     let brackets = buffer.matching_bracket();
     let cursor = buffer.cursor();
-    let scroll_left = st.scroll_left;
+    let scroll_left = st.doc().scroll_left;
     let text_width = usize::from(area.text.width);
 
     // Byte offset where each line starts.
@@ -153,7 +163,7 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
 
     let mut rows = Vec::new();
     for row in 0..usize::from(area.text.height) {
-        let index = st.scroll_top + row;
+        let index = st.doc().scroll_top + row;
         let Some(line) = buffer.lines().get(index) else {
             break;
         };
@@ -224,8 +234,8 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
     if st.focus == Pane::Editor && !st.help_open {
         let line = buffer.lines().get(cursor.line).map_or("", String::as_str);
         let x = display_col(line, cursor.col);
-        if cursor.line >= st.scroll_top && x >= scroll_left {
-            let (dx, dy) = (x - scroll_left, cursor.line - st.scroll_top);
+        if cursor.line >= st.doc().scroll_top && x >= scroll_left {
+            let (dx, dy) = (x - scroll_left, cursor.line - st.doc().scroll_top);
             if dx < usize::from(area.text.width) && dy < usize::from(area.text.height) {
                 frame.set_cursor_position((area.text.x + dx as u16, area.text.y + dy as u16));
             }
@@ -277,7 +287,7 @@ fn draw_hint_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 
 fn draw_status_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let st = &app.state;
-    let cursor = st.editor.cursor();
+    let cursor = st.editor().cursor();
     let mut text = format!(
         " no connection │ focus: {} │ Ln {}, Col {}",
         st.focus.label(),
@@ -451,7 +461,12 @@ mod tests {
         for _ in 0..10 {
             key(&mut a, KeyCode::PageDown, KeyModifiers::NONE);
         }
-        assert!(render(&a, 80, 24).contains("global keys"));
+        let bottom = render(&a, 80, 24);
+        assert!(!bottom.contains("editor keys"), "scrolled past the top");
+        assert!(
+            bottom.contains("focus.next"),
+            "the last global binding is visible"
+        );
         assert_snapshot("editor_help_top_80x24", &top);
     }
 
@@ -477,6 +492,17 @@ mod tests {
         type_text(&mut a, "select 1");
         let out = render(&a, 40, 10);
         assert!(out.contains("select 1") && out.contains("Terminal too small"));
+    }
+
+    #[test]
+    fn editor_title_names_the_buffer_only_when_there_are_several() {
+        let mut a = app(80, 24);
+        assert!(render(&a, 80, 24).starts_with("┌ ▶ Editor ─"));
+        key(&mut a, KeyCode::Char('n'), KeyModifiers::CONTROL);
+        type_text(&mut a, "x");
+        let out = render(&a, 80, 24);
+        assert!(out.starts_with("┌ ▶ Editor: Buffer 2 (2/2) ─"), "{out}");
+        assert!(out.lines().nth(1).is_some_and(|l| l.starts_with("│1 x")));
     }
 
     #[test]

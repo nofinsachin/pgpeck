@@ -17,6 +17,7 @@
 #
 # Actions: app.quit, focus.context, focus.editor, focus.results, focus.next,
 # focus.prev, view.toggle_context, view.toggle_results, help.toggle,
+# buffer.new, buffer.close, buffer.next, buffer.prev, buffer.reopen,
 # help.scroll_up, help.scroll_down, help.page_up, help.page_down, and the
 # editor.* actions used below. Text is typed into the editor by any printable
 # key that has no binding (Ctrl+C is unbound: copy is Alt+C or Ctrl+Insert).
@@ -36,6 +37,13 @@
 "f3" = "view.toggle_context"
 "f4" = "view.toggle_results"
 "f1" = "help.toggle"
+"ctrl+n" = "buffer.new"
+"ctrl+w" = "buffer.close"
+"alt+right" = "buffer.next"
+"ctrl+pagedown" = "buffer.next"
+"alt+left" = "buffer.prev"
+"ctrl+pageup" = "buffer.prev"
+"alt+t" = "buffer.reopen"
 
 [editor]
 "left" = "editor.move_left"
