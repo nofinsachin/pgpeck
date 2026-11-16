@@ -62,6 +62,8 @@ pub enum Action {
     DialogClear,
     PickerSaveProfile,
     PickerEditProfile,
+    FindOpen,
+    FindSample,
     SessionEditDatabase,
     SessionEditUser,
     TransactionRollback,
@@ -117,6 +119,8 @@ const ACTIONS: &[(&str, Action)] = &[
     ("dialog.clear", Action::DialogClear),
     ("picker.save_profile", Action::PickerSaveProfile),
     ("picker.edit_profile", Action::PickerEditProfile),
+    ("find.open", Action::FindOpen),
+    ("find.sample_rows", Action::FindSample),
     ("session.edit_database", Action::SessionEditDatabase),
     ("session.edit_user", Action::SessionEditUser),
     ("transaction.rollback", Action::TransactionRollback),
@@ -302,6 +306,8 @@ impl Action {
             Action::DialogClear => "clear",
             Action::PickerSaveProfile => "save as profile",
             Action::PickerEditProfile => "edit connection",
+            Action::FindOpen => "find",
+            Action::FindSample => "select sample rows",
             Action::SessionEditDatabase => "change database",
             Action::SessionEditUser => "change user",
             Action::TransactionRollback => "roll back",
@@ -329,6 +335,8 @@ pub enum Scope {
     Completion,
     /// The connection picker.
     Picker,
+    /// The find overlay.
+    Find,
     /// The form for entering connection details.
     Form,
     /// The password prompt.
@@ -346,6 +354,7 @@ impl Scope {
             Scope::Results => "results",
             Scope::Completion => "completion",
             Scope::Picker => "picker",
+            Scope::Find => "find",
             Scope::Form => "form",
             Scope::Prompt => "prompt",
             Scope::Dialog => "dialog",
@@ -361,6 +370,7 @@ impl Scope {
             Scope::Results,
             Scope::Completion,
             Scope::Picker,
+            Scope::Find,
             Scope::Form,
             Scope::Prompt,
             Scope::Dialog,
@@ -378,6 +388,7 @@ impl Scope {
                 | Scope::Editor
                 | Scope::Completion
                 | Scope::Picker
+                | Scope::Find
                 | Scope::Form
                 | Scope::Prompt
         )
@@ -765,6 +776,7 @@ mod tests {
             Scope::Results,
             Scope::Completion,
             Scope::Picker,
+            Scope::Find,
             Scope::Form,
             Scope::Prompt,
             Scope::Dialog,

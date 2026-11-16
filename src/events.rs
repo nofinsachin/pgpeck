@@ -8,6 +8,7 @@ use std::time::Duration;
 use crossterm::event::{self, Event as TermEvent, KeyEvent, KeyEventKind};
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::catalog::Catalog;
 use crate::command::DocId;
 use crate::db::{ConnId, ConnectionInfo, DbError, QueryOutput, SessionStats};
 
@@ -52,6 +53,10 @@ pub enum Background {
     Stats {
         conn: ConnId,
         result: Result<SessionStats, DbError>,
+    },
+    Catalog {
+        conn: ConnId,
+        result: Result<Catalog, DbError>,
     },
     ProfilesSaved(Result<(), String>),
 }

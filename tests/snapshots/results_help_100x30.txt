@@ -25,6 +25,6 @@
 │            │  Alt+4             focus session         focus.session                 │            │
 │            │  Alt+Left          previous buffer       buffer.prev                   │            │
 │            │  Alt+O             reconnect             connection.reconnect          │            │
-└────────────└─────────────────── Up/Down scroll  ? close  (1/25) ────────────────────┘────────────┘
+└────────────└─────────────────── Up/Down scroll  ? close  (1/26) ────────────────────┘────────────┘
 C connect  R run  E edit  Q quit  ? help
  no connection │ focus: Results │ Ln 1, Col 1

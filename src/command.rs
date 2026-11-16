@@ -27,6 +27,10 @@ pub enum Command {
     Stats {
         conn: ConnId,
     },
+    /// Read the schema metadata for the find overlay.
+    Catalog {
+        conn: ConnId,
+    },
     Cancel {
         conn: ConnId,
     },

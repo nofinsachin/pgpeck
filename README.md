@@ -3,8 +3,9 @@
 A fast, keyboard-driven terminal client for PostgreSQL, written in Rust.
 
 Status: early development. You can connect to a database, run statements and
-read the results. Not done yet: TLS (`ssl_mode` defaults to `disable`; remote hosts refuse `prefer`),
-paged result browsing, the schema explorer and history.
+read the results. You can also find tables, views, columns, functions, types and schemas by name. Not done yet: TLS
+(`ssl_mode` defaults to `disable`; remote hosts refuse `prefer`), paged result browsing, the
+relationship view, the context strip and history.
 
 ## Build and run
 
@@ -36,6 +37,7 @@ The keys, all shown on screen:
 | Where | Key | Does |
 |---|---|---|
 | Context pane (top left, where you start) | `C` | connect |
+| | `F` | find a table, view, column, function, type or schema |
 | | `R` | run the statement under the cursor |
 | | `E` or `Enter` | go to the editor |
 | | `N` | new buffer |
@@ -46,6 +48,10 @@ The keys, all shown on screen:
 | | `F5` | refresh the numbers now |
 | | `Esc` | back to the context pane |
 | | `Z` | roll back an open or failed transaction |
+| Any pane | `Ctrl+P` | find a schema object (the Find window) |
+| Find window | `Enter` | put the object's name in the editor |
+| | `Alt+S` | on a table or view: add `SELECT * ... LIMIT 100` and run it |
+| | `Esc` | close, changing nothing |
 | Any pane | `Alt+Z` | roll back an open or failed transaction |
 | Editor | `Ctrl+R` | run the statement under the cursor, or the selection |
 | | `Esc` | back to the commands pane |

@@ -19,6 +19,6 @@
 │  │  Ctrl+V            paste                 editor.paste                  │  │
 │  │  Ctrl+X            cut                   editor.cut                    │  │
 │  │  Ctrl+Y            redo                  editor.redo                   │  │
-└──└─────────────────── Up/Down scroll  ? close  (1/57) ────────────────────┘──┘
+└──└─────────────────── Up/Down scroll  ? close  (1/58) ────────────────────┘──┘
 Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 1, Col 1

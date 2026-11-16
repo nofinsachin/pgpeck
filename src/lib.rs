@@ -4,6 +4,7 @@
 //! integration tests use the same code.
 
 pub mod app;
+pub mod catalog;
 pub mod command;
 pub mod complete;
 pub mod config;

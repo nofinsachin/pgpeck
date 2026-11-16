@@ -5,11 +5,12 @@ use ratatui::layout::Rect;
 
 use std::time::Instant;
 
+use crate::catalog::{Catalog, Object as CatalogObject};
 use crate::command::{Command, DocId};
 use crate::complete::{self, Candidate, KeywordSource};
 use crate::config::Config;
 use crate::db::{ConnId, ConnectionInfo, SessionStats, TxState};
-use crate::editor::{display_col, Buffer, EditCmd, Pos};
+use crate::editor::{display_col, Buffer, EditCmd, Motion, Pos};
 use crate::events::{Background, Event};
 use crate::form::{ConnectForm, SessionForm};
 use crate::keymap::{Action, KeyChord, Keymap, Scope};
@@ -83,6 +84,16 @@ pub struct State {
     pub register: String,
 }
 
+/// Rows a sample `SELECT` asks for (R9.7).
+const SAMPLE_ROWS: usize = 100;
+
+/// Whether a command tag means the schema may have changed.
+fn changes_schema(tag: &str) -> bool {
+    ["CREATE", "ALTER", "DROP", "SELECT INTO"]
+        .iter()
+        .any(|prefix| tag.starts_with(prefix))
+}
+
 /// Where a connection stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnStatus {
@@ -113,6 +124,11 @@ pub struct Connection {
     /// cancel request hits whatever the server runs at that moment, so it is
     /// sent once the read is over.
     pub cancel_after_stats: bool,
+    /// Schema metadata for the find overlay. `None` until first read.
+    pub catalog: Option<Catalog>,
+    pub catalog_error: Option<String>,
+    /// A read is in flight.
+    pub catalog_busy: bool,
 }
 
 impl Connection {
@@ -132,6 +148,8 @@ pub struct PasswordPrompt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dialog {
     Picker(Picker),
+    /// The find overlay. It reuses the picker's input and selection.
+    Find(Picker),
     /// Connection details typed by hand.
     Form(ConnectForm),
     /// Database and user of the current connection.
@@ -524,6 +542,7 @@ impl App {
             ],
             Pane::Context => &[
                 Action::ConnectionOpen,
+                Action::FindOpen,
                 Action::QueryRun,
                 Action::FocusEditor,
                 Action::BufferNew,
@@ -785,7 +804,9 @@ impl App {
             | Action::DialogBackspace
             | Action::DialogClear
             | Action::PickerSaveProfile
-            | Action::PickerEditProfile => {}
+            | Action::PickerEditProfile
+            | Action::FindSample => {}
+            Action::FindOpen => self.open_find(),
             Action::CompletionTrigger => self.refresh_completion(true),
             Action::CompletionAccept => self.accept_completion(),
             Action::CompletionDismiss => self.state.completion = None,
@@ -822,6 +843,102 @@ impl App {
         self.state.dialog = Some(Dialog::Picker(Picker::default()));
     }
 
+    /// The catalog of the connection the active buffer uses.
+    pub fn active_catalog(&self) -> Option<&Catalog> {
+        self.state
+            .connection(self.state.doc().connection?)?
+            .catalog
+            .as_ref()
+    }
+
+    /// What the find overlay lists for `input`.
+    fn find_results<'a>(
+        connections: &'a [Connection],
+        conn: Option<ConnId>,
+        input: &str,
+    ) -> Vec<&'a CatalogObject> {
+        conn.and_then(|id| connections.iter().find(|c| c.id == id))
+            .and_then(|c| c.catalog.as_ref())
+            .map_or_else(Vec::new, |catalog| catalog.search(input))
+    }
+
+    /// The objects the overlay lists now, for drawing.
+    pub fn find_items(&self, input: &str) -> Vec<&CatalogObject> {
+        Self::find_results(&self.state.connections, self.state.doc().connection, input)
+    }
+
+    /// Asks for the schema metadata. Same conditions as the statistics read:
+    /// it must not start or break a transaction.
+    fn request_catalog(&mut self, conn: ConnId) -> bool {
+        if self.state.running.is_some() {
+            return false;
+        }
+        let Some(c) = self.state.connection_mut(conn) else {
+            return false;
+        };
+        if c.status != ConnStatus::Connected || c.tx != TxState::Idle || c.catalog_busy {
+            return false;
+        }
+        c.catalog_busy = true;
+        self.pending.push(Command::Catalog { conn });
+        true
+    }
+
+    fn open_find(&mut self) {
+        let connected = self
+            .state
+            .doc()
+            .connection
+            .and_then(|id| self.state.connection(id))
+            .filter(|c| c.status == ConnStatus::Connected)
+            .map(|c| (c.id, c.catalog.is_none()));
+        let Some((conn, missing)) = connected else {
+            let key = self.hint_key(Action::ConnectionOpen).map(|k| k.to_string());
+            return self.notice(match key {
+                Some(key) => format!("Not connected. Press {key} to connect"),
+                None => "Not connected".to_string(),
+            });
+        };
+        if missing {
+            self.request_catalog(conn);
+        }
+        self.state.help_open = false;
+        self.state.completion = None;
+        self.state.dialog = Some(Dialog::Find(Picker::default()));
+    }
+
+    /// Enter puts the object's name in the editor. With `sample`, a table or
+    /// view gets a `SELECT` that runs at once (R9.7).
+    fn submit_find(&mut self, sample: bool) {
+        let Some(Dialog::Find(find)) = &self.state.dialog else {
+            return;
+        };
+        let items = self.find_items(&find.input);
+        let Some(object) = items.get(find.selected).copied() else {
+            return;
+        };
+        let name = object.sql_name();
+        let relation = object.kind.is_relation();
+        if sample && !relation {
+            return self.notice("Sample rows are available for tables and views");
+        }
+        self.state.dialog = None;
+        self.state.focus = Pane::Editor;
+        let opts = self.config.editor.options();
+        if sample {
+            let statement = format!("SELECT * FROM {name} LIMIT {SAMPLE_ROWS};");
+            let editor = self.state.editor_mut();
+            editor.move_cursor(Motion::BufferEnd, false, 1);
+            if !editor.text().trim().is_empty() {
+                editor.insert_str("\n\n", &opts);
+            }
+            editor.insert_str(&statement, &opts);
+            self.run_statement();
+        } else {
+            self.state.editor_mut().insert_str(&name, &opts);
+        }
+    }
+
     fn notice(&mut self, text: impl Into<String>) {
         self.state.notice = Some(text.into());
     }
@@ -852,6 +969,9 @@ impl App {
             stats_busy: false,
             stats_at: None,
             cancel_after_stats: false,
+            catalog: None,
+            catalog_error: None,
+            catalog_busy: false,
         });
         self.state.dialog = None;
         self.notice(format!("Connecting to {label}…"));
@@ -901,6 +1021,7 @@ impl App {
     fn on_dialog_key(&mut self, chord: KeyChord) {
         let scope = match self.state.dialog {
             Some(Dialog::Picker(_)) => Scope::Picker,
+            Some(Dialog::Find(_)) => Scope::Find,
             Some(Dialog::Form(_) | Dialog::Session(_) | Dialog::Confirm(_)) => Scope::Form,
             Some(Dialog::Password(_)) => Scope::Prompt,
             None => return,
@@ -918,7 +1039,7 @@ impl App {
 
     fn dialog_type(&mut self, c: char) {
         match &mut self.state.dialog {
-            Some(Dialog::Picker(p)) => p.push(c),
+            Some(Dialog::Picker(p) | Dialog::Find(p)) => p.push(c),
             Some(Dialog::Form(f)) => f.type_char(c),
             Some(Dialog::Session(f)) => f.type_char(c),
             Some(Dialog::Confirm(c0)) => {
@@ -945,10 +1066,28 @@ impl App {
                 let count = p.items(profiles, reconnect.as_deref()).len();
                 p.select_previous(count);
             }
+            (Action::DialogNext, Some(Dialog::Find(p))) => {
+                let count = Self::find_results(
+                    &self.state.connections,
+                    self.state.docs[self.state.active].connection,
+                    &p.input,
+                )
+                .len();
+                p.select_next(count);
+            }
+            (Action::DialogPrev, Some(Dialog::Find(p))) => {
+                let count = Self::find_results(
+                    &self.state.connections,
+                    self.state.docs[self.state.active].connection,
+                    &p.input,
+                )
+                .len();
+                p.select_previous(count);
+            }
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
             (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
             (Action::DialogNext | Action::DialogPrev, Some(Dialog::Session(f))) => f.next_field(),
-            (Action::DialogBackspace, Some(Dialog::Picker(p))) => p.backspace(),
+            (Action::DialogBackspace, Some(Dialog::Picker(p) | Dialog::Find(p))) => p.backspace(),
             (Action::DialogBackspace, Some(Dialog::Form(f))) => f.backspace(),
             (Action::DialogBackspace, Some(Dialog::Session(f))) => f.backspace(),
             (Action::DialogBackspace, Some(Dialog::Confirm(c))) => {
@@ -960,12 +1099,14 @@ impl App {
                 text.pop();
                 p.input = Secret::new(text);
             }
-            (Action::DialogClear, Some(Dialog::Picker(p))) => p.clear(),
+            (Action::DialogClear, Some(Dialog::Picker(p) | Dialog::Find(p))) => p.clear(),
             (Action::DialogClear, Some(Dialog::Form(f))) => f.clear(),
             (Action::DialogClear, Some(Dialog::Session(f))) => f.clear(),
             (Action::DialogClear, Some(Dialog::Confirm(c))) => c.input.clear(),
             (Action::DialogClear, Some(Dialog::Password(p))) => p.input = Secret::new(""),
-            (Action::DialogCancel, Some(Dialog::Picker(_))) => self.state.dialog = None,
+            (Action::DialogCancel, Some(Dialog::Picker(_) | Dialog::Find(_))) => {
+                self.state.dialog = None;
+            }
             // Esc in the form goes back to the list.
             (Action::DialogCancel, Some(Dialog::Form(_))) => {
                 self.state.dialog = Some(Dialog::Picker(Picker::default()));
@@ -982,6 +1123,8 @@ impl App {
                 self.notice("Connection cancelled");
             }
             (Action::DialogSubmit, Some(Dialog::Picker(_))) => self.submit_picker(),
+            (Action::DialogSubmit, Some(Dialog::Find(_))) => self.submit_find(false),
+            (Action::FindSample, Some(Dialog::Find(_))) => self.submit_find(true),
             (Action::DialogSubmit, Some(Dialog::Form(_))) => self.submit_form(),
             (Action::DialogSubmit, Some(Dialog::Session(_))) => self.submit_session(),
             (Action::DialogSubmit, Some(Dialog::Confirm(_))) => self.submit_confirm(),
@@ -1222,6 +1365,7 @@ impl App {
                 c.info = Some(info);
                 self.notice(text);
                 self.request_stats(conn, true);
+                self.request_catalog(conn);
                 // Ready to write SQL: move from the commands pane to the editor.
                 if self.state.doc().connection == Some(conn) && self.state.focus == Pane::Context {
                     self.state.focus = Pane::Editor;
@@ -1278,6 +1422,10 @@ impl App {
                 }
                 // A statement may have changed the numbers.
                 self.request_stats(conn, true);
+                // Schema changes (R-SCH-007): read the catalog again.
+                if output.sets.iter().any(|s| changes_schema(&s.tag)) {
+                    self.request_catalog(conn);
+                }
                 if tx == TxState::Failed {
                     let key = self
                         .keymap
@@ -1294,6 +1442,25 @@ impl App {
                     self.notice("Query cancelled");
                 }
             }
+            Background::Catalog { conn, result } => {
+                if let Some(c) = self.state.connection_mut(conn) {
+                    c.catalog_busy = false;
+                    match result {
+                        Ok(catalog) => {
+                            c.catalog = Some(catalog);
+                            c.catalog_error = None;
+                        }
+                        Err(e) if e.is_cancellation() => {}
+                        Err(e) => c.catalog_error = Some(e.message),
+                    }
+                    // A cancel hits whatever the server runs, so wait until
+                    // both reads are over.
+                    if !c.stats_busy && !c.catalog_busy && std::mem::take(&mut c.cancel_after_stats)
+                    {
+                        self.pending.push(Command::Cancel { conn });
+                    }
+                }
+            }
             Background::Stats { conn, result } => {
                 if let Some(c) = self.state.connection_mut(conn) {
                     c.stats_busy = false;
@@ -1306,7 +1473,10 @@ impl App {
                         Err(e) if e.is_cancellation() => {}
                         Err(e) => c.stats_error = Some(e.message),
                     }
-                    if std::mem::take(&mut c.cancel_after_stats) {
+                    // A cancel hits whatever the server runs, so wait until
+                    // both reads are over.
+                    if !c.stats_busy && !c.catalog_busy && std::mem::take(&mut c.cancel_after_stats)
+                    {
                         self.pending.push(Command::Cancel { conn });
                     }
                 }
@@ -1434,7 +1604,7 @@ impl App {
             let conn = running.conn;
             match self.state.connection_mut(conn) {
                 // The server would cancel the statistics read, not the statement.
-                Some(c) if c.stats_busy => c.cancel_after_stats = true,
+                Some(c) if c.stats_busy || c.catalog_busy => c.cancel_after_stats = true,
                 _ => self.pending.push(Command::Cancel { conn }),
             }
             self.notice("Cancelling…");
@@ -2621,10 +2791,15 @@ mod tests {
     fn ctrl_c_cancels_only_a_running_statement() {
         let mut a = app();
         let conn = connected(&mut a);
-        // The first statistics read is over, so nothing else is on the connection.
+        // The first statistics and schema reads are over, so nothing else is
+        // on the connection.
         a.update(Event::Background(Background::Stats {
             conn,
             result: Ok(sample_stats()),
+        }));
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
         }));
         assert!(
             send(&mut a, KeyCode::Char('c'), KeyModifiers::CONTROL).is_empty(),
@@ -3418,6 +3593,11 @@ mod tests {
             conn,
             result: Ok(sample_stats()),
         }));
+        assert!(commands.is_empty(), "the schema read is still going");
+        let commands = a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
         assert!(
             matches!(&commands[..], [Command::Cancel { .. }]),
             "{commands:?}"
@@ -3827,5 +4007,149 @@ mod tests {
             "{commands:?}"
         );
         assert!(a.state.dialog.is_none());
+    }
+
+    fn sample_catalog() -> Catalog {
+        use crate::catalog::{Kind, Object};
+        let object = |kind, schema: &str, name: &str, parent: Option<&str>| Object {
+            kind,
+            schema: schema.to_string(),
+            name: name.to_string(),
+            parent: parent.map(str::to_string),
+            detail: String::new(),
+        };
+        Catalog {
+            objects: vec![
+                object(Kind::Table, "public", "orders", None),
+                object(Kind::Table, "archive", "orders", None),
+                object(Kind::Column, "public", "id", Some("orders")),
+                object(Kind::Function, "public", "refresh", None),
+            ],
+        }
+    }
+
+    #[test]
+    fn connecting_reads_the_schema_and_the_overlay_waits_for_it() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        assert!(a.state.connection(conn).is_some_and(|c| c.catalog_busy));
+        ctrl(&mut a, 'p');
+        assert!(matches!(a.state.dialog, Some(Dialog::Find(_))));
+        assert!(a.find_items("").is_empty(), "still reading");
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        assert!(a.state.connection(conn).is_some_and(|c| !c.catalog_busy));
+        assert_eq!(a.find_items("").len(), 3, "columns wait for a query");
+        assert_eq!(a.find_items("orders.id").len(), 1);
+    }
+
+    #[test]
+    fn find_needs_a_connection() {
+        let mut a = app();
+        ctrl(&mut a, 'p');
+        assert!(a.state.dialog.is_none());
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("Not connected")));
+    }
+
+    #[test]
+    fn find_takes_typing_and_escape_changes_nothing() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        type_into(&mut a, "x");
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "orders");
+        let Some(Dialog::Find(f)) = &a.state.dialog else {
+            panic!("find")
+        };
+        assert_eq!(f.input, "orders");
+        press(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(a.state.dialog.is_none());
+        assert_eq!(a.state.editor().text(), "x");
+    }
+
+    #[test]
+    fn enter_inserts_the_qualified_name_at_the_cursor() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        type_into(&mut a, "select * from ");
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "archive");
+        press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(a.state.dialog.is_none());
+        assert_eq!(a.state.editor().text(), "select * from archive.orders");
+    }
+
+    #[test]
+    fn alt_s_adds_a_sample_select_and_runs_it() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        type_into(&mut a, "select 1;");
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "public.orders");
+        let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::ALT);
+        assert_eq!(
+            a.state.editor().text(),
+            "select 1;\n\nSELECT * FROM public.orders LIMIT 100;"
+        );
+        assert!(matches!(
+            &commands[..],
+            [Command::Run { sql, .. }] if sql == "SELECT * FROM public.orders LIMIT 100"
+        ));
+    }
+
+    #[test]
+    fn alt_s_on_a_column_does_nothing() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        type_into(&mut a, "orders.id");
+        let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::ALT);
+        assert!(commands.is_empty());
+        assert!(matches!(a.state.dialog, Some(Dialog::Find(_))));
+    }
+
+    #[test]
+    fn a_schema_change_reads_the_catalog_again() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        type_into(&mut a, "create table t(a int)");
+        let Command::Run { doc, .. } = press_run(&mut a)[0].clone() else {
+            panic!("run")
+        };
+        let mut set = rows_set(&[]);
+        set.columns.clear();
+        set.tag = "CREATE TABLE".to_string();
+        a.update(Event::Background(Background::QueryFinished {
+            conn,
+            doc,
+            output: output(vec![set], None),
+        }));
+        assert!(a.state.connection(conn).is_some_and(|c| c.catalog_busy));
     }
 }

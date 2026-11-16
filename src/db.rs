@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage};
 
+use crate::catalog::{self, Catalog};
 use crate::profile::{Profile, SslMode};
 use crate::secrets::Secret;
 use crate::sql;
@@ -322,6 +323,59 @@ pub async fn stats(session: &Session) -> Result<SessionStats, DbError> {
         uptime_secs: int(9).unwrap_or(0),
         sees_all_sessions: row.get(10) == Some("t"),
     })
+}
+
+const CATALOG_SQL: &str = r"
+with ns as (
+  select oid, nspname from pg_namespace
+  where nspname !~ '^pg_' and nspname <> 'information_schema'
+), rel as (
+  select c.oid, c.relname, c.relkind, ns.nspname
+  from pg_class c join ns on ns.oid = c.relnamespace
+  where c.relkind in ('r', 'p', 'v', 'm', 'f')
+)
+select 'schema', nspname, nspname, '', '' from ns
+union all
+select case relkind when 'v' then 'view' when 'm' then 'matview'
+                    when 'f' then 'foreign' else 'table' end,
+       nspname, relname, '', ''
+from rel
+union all
+select 'column', rel.nspname, a.attname, rel.relname, format_type(a.atttypid, a.atttypmod)
+from rel join pg_attribute a on a.attrelid = rel.oid
+where a.attnum > 0 and not a.attisdropped
+union all
+select 'function', ns.nspname, p.proname, '', pg_get_function_identity_arguments(p.oid)
+from pg_proc p join ns on ns.oid = p.pronamespace
+where p.prokind in ('f', 'p')
+union all
+select 'type', ns.nspname, t.typname, '', t.typtype::text
+from pg_type t join ns on ns.oid = t.typnamespace
+where t.typtype in ('e', 'd')
+limit 50000
+";
+
+/// Reads the schemas, relations, columns, functions and types the user can
+/// see. Call it only when the session is idle, like `stats`.
+pub async fn catalog(session: &Session) -> Result<Catalog, DbError> {
+    let messages = session
+        .client
+        .simple_query(CATALOG_SQL)
+        .await
+        .map_err(|e| DbError::from(&e))?;
+    let mut objects = Vec::new();
+    for message in messages {
+        let SimpleQueryMessage::Row(row) = message else {
+            continue;
+        };
+        let text = |i: usize| row.get(i).unwrap_or("");
+        if let Some(object) =
+            catalog::object_from_row([text(0), text(1), text(2), text(3), text(4)])
+        {
+            objects.push(object);
+        }
+    }
+    Ok(Catalog { objects })
 }
 
 /// Where the session is in a transaction (R16.1).

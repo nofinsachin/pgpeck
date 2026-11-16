@@ -5,7 +5,7 @@
 # "none" to remove a default binding. Two actions on the same key in one scope
 # is a conflict, and the later one is refused.
 #
-# Scopes: global, editor, context, session, results, completion, picker, form, prompt,
+# Scopes: global, editor, context, session, results, completion, picker, find, form, prompt,
 # dialog. The context scope is the commands pane that has focus at startup.
 # The editor and global scopes cannot bind printable characters, because the
 # editor must always accept typing. Use Ctrl, Alt or function keys there.
@@ -49,6 +49,8 @@
 "ctrl+pageup" = "buffer.prev"
 "alt+t" = "buffer.reopen"
 "ctrl+o" = "connection.open"
+# Finds tables, views, columns, functions, types and schemas by name.
+"ctrl+p" = "find.open"
 "alt+o" = "connection.reconnect"
 # Ends an open or failed transaction with ROLLBACK.
 "alt+z" = "transaction.rollback"
@@ -114,6 +116,7 @@
 # This is the commands pane. It has focus when oxpecker starts, so a single
 # key is enough. Typing SQL happens in the editor, which never gives up letters.
 "c" = "connection.open"
+"f" = "find.open"
 "r" = "query.run_statement"
 "e" = "focus.editor"
 "enter" = "focus.editor"
@@ -160,6 +163,16 @@
 "ctrl+u" = "dialog.clear"
 "ctrl+s" = "picker.save_profile"
 "ctrl+e" = "picker.edit_profile"
+
+[find]
+"up" = "dialog.prev"
+"down" = "dialog.next"
+"enter" = "dialog.submit"
+"esc" = "dialog.cancel"
+"backspace" = "dialog.backspace"
+"ctrl+u" = "dialog.clear"
+# On a table or view: add a SELECT to the editor and run it.
+"alt+s" = "find.sample_rows"
 
 [form]
 "down" = "dialog.next"

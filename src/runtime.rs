@@ -96,6 +96,15 @@ impl Runtime {
                     this.send(Background::Stats { conn, result });
                 });
             }
+            Command::Catalog { conn } => {
+                tokio::spawn(async move {
+                    let result = match this.session(conn) {
+                        Some(session) => db::catalog(&session).await,
+                        None => Err(db::DbError::new("the connection is closed")),
+                    };
+                    this.send(Background::Catalog { conn, result });
+                });
+            }
             Command::Cancel { conn } => {
                 tokio::spawn(async move {
                     if let Some(session) = this.session(conn) {

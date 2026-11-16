@@ -382,3 +382,49 @@ async fn a_plain_role_gets_numbers_but_not_other_roles_activity() {
     assert!(!stats.sees_all_sessions);
     assert!(stats.connections >= 1 && stats.size_bytes > 0);
 }
+
+#[tokio::test]
+async fn the_catalog_lists_user_objects_with_their_schemas() {
+    use oxpecker::catalog::Kind;
+    let url = database!();
+    let (session, _) = connect(&url).await;
+    let setup = "
+        drop schema if exists oxp_cat cascade;
+        create schema oxp_cat;
+        create table oxp_cat.\"Mixed Case\" (id integer primary key, note text);
+        create view oxp_cat.v as select id from oxp_cat.\"Mixed Case\";
+        create materialized view oxp_cat.m as select id from oxp_cat.\"Mixed Case\";
+        create function oxp_cat.f(a integer, b text) returns integer language sql as 'select 1';
+        create type oxp_cat.mood as enum ('ok', 'bad');";
+    let out = db::run(&session, setup, 100).await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+
+    let catalog = db::catalog(&session).await.expect("catalog");
+    let find = |kind: Kind, name: &str| {
+        catalog
+            .objects
+            .iter()
+            .find(|o| o.kind == kind && o.schema == "oxp_cat" && o.name == name)
+    };
+    assert!(find(Kind::Schema, "oxp_cat").is_some());
+    assert!(find(Kind::Table, "Mixed Case").is_some());
+    assert!(find(Kind::View, "v").is_some());
+    assert!(find(Kind::MaterializedView, "m").is_some());
+    assert!(find(Kind::Type, "mood").is_some());
+    let function = find(Kind::Function, "f").expect("function");
+    assert_eq!(function.detail, "a integer, b text");
+    let column = find(Kind::Column, "note").expect("column");
+    assert_eq!(column.parent.as_deref(), Some("Mixed Case"));
+    assert_eq!(column.detail, "text");
+    assert_eq!(column.sql_name(), "\"Mixed Case\".note");
+    assert!(
+        catalog
+            .objects
+            .iter()
+            .all(|o| !o.schema.starts_with("pg_") && o.schema != "information_schema"),
+        "system schemas are left out"
+    );
+
+    let out = db::run(&session, "drop schema oxp_cat cascade", 100).await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+}

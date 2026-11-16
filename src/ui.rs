@@ -61,6 +61,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     match &app.state.dialog {
         Some(Dialog::Picker(picker)) => draw_picker(frame, app, theme, picker, area),
+        Some(Dialog::Find(find)) => draw_find(frame, app, theme, find, area),
         Some(Dialog::Form(form)) => draw_form(frame, app, theme, form, area),
         Some(Dialog::Session(form)) => draw_session_form(frame, app, theme, form, area),
         Some(Dialog::Password(_)) => draw_password(frame, app, theme, area),
@@ -181,9 +182,10 @@ fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                     Span::styled(buffer, bold),
                 ]),
                 match statement {
-                    Some(text) => {
-                        Line::from(vec![Span::styled("Statement  ", label), Span::styled(text, value)])
-                    }
+                    Some(text) => Line::from(vec![
+                        Span::styled("Statement  ", label),
+                        Span::styled(text, value),
+                    ]),
                     None => Line::from(vec![
                         Span::styled("Statement  ", label),
                         Span::styled("none under the cursor", dim),
@@ -1321,6 +1323,132 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
     frame.render_widget(Paragraph::new(Line::styled(footer, dim)), footer_area);
 }
 
+/// The find overlay: a search box over results grouped by kind (R9).
+fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker, area: Rect) {
+    let dim = Style::new().fg(theme.dimmed);
+    let label = Style::new().fg(theme.label);
+    let value = Style::new().fg(theme.value);
+    let popup = layout::centered(area, 84, area.height.saturating_sub(4).clamp(8, 22));
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Find ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.focus));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height < 3 {
+        return;
+    }
+
+    let prompt = format!("> {}", find.input);
+    let input_row = Rect { height: 1, ..inner };
+    if find.input.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("> "),
+                Span::styled("type a table, view, column, function, type or schema", dim),
+            ])),
+            input_row,
+        );
+    } else {
+        frame.render_widget(Paragraph::new(prompt.clone()), input_row);
+    }
+    let cursor_x = inner.x
+        + prompt
+            .chars()
+            .map(cell_width)
+            .sum::<usize>()
+            .min(usize::from(inner.width.saturating_sub(1))) as u16;
+    frame.set_cursor_position((cursor_x, inner.y));
+
+    let list = Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(2),
+        ..inner
+    };
+    let width = usize::from(list.width);
+    let connection = app
+        .state
+        .doc()
+        .connection
+        .and_then(|id| app.state.connection(id));
+    let items = app.find_items(&find.input);
+
+    // Group headings are lines of their own. Remember which line holds the
+    // selected item so it stays in view.
+    let mut lines: Vec<Line> = Vec::new();
+    let mut selected_line = 0;
+    let mut last_kind = None;
+    for (index, object) in items.iter().enumerate() {
+        if last_kind != Some(object.kind) {
+            last_kind = Some(object.kind);
+            lines.push(Line::styled(
+                object.kind.plural(),
+                label.add_modifier(Modifier::BOLD),
+            ));
+        }
+        let selected = index == find.selected;
+        if selected {
+            selected_line = lines.len();
+        }
+        let marker = if selected { "▶ " } else { "  " };
+        let path = object.path();
+        let summary = object.summary();
+        let path_width = width.saturating_sub(2 + summary.chars().count() + 2);
+        let mut line = Line::from(vec![
+            Span::styled(marker, value),
+            Span::styled(fit(&path, path_width.max(8)), value),
+            Span::raw("  "),
+            Span::styled(summary, dim),
+        ]);
+        if selected {
+            line = line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD));
+        }
+        lines.push(line);
+    }
+    if items.is_empty() {
+        let message = match connection {
+            Some(c) if c.catalog_error.is_some() => {
+                format!(
+                    "Could not read the schema: {}",
+                    c.catalog_error.as_deref().unwrap_or("")
+                )
+            }
+            Some(c) if c.catalog.is_none() => "Reading the schema…".to_string(),
+            Some(c) if c.catalog.as_ref().is_some_and(|k| k.is_empty()) => {
+                "This database has no tables, views or functions you can see".to_string()
+            }
+            _ => "Nothing matches".to_string(),
+        };
+        lines.push(Line::styled(message, dim));
+    }
+    let top = (selected_line + 1).saturating_sub(usize::from(list.height));
+    let visible: Vec<Line> = lines
+        .into_iter()
+        .skip(top)
+        .take(usize::from(list.height))
+        .collect();
+    frame.render_widget(Paragraph::new(visible), list);
+
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Find], |_| true)
+            .map_or(String::new(), |k| k.to_string())
+    };
+    let footer = format!(
+        "{} insert name  {} select sample rows  {} close",
+        key(Action::DialogSubmit),
+        key(Action::FindSample),
+        key(Action::DialogCancel)
+    );
+    let footer_area = Rect {
+        y: inner.y + inner.height - 1,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(Paragraph::new(Line::styled(footer, dim)), footer_area);
+}
+
 fn draw_form(
     frame: &mut Frame,
     app: &App,
@@ -1829,7 +1957,7 @@ mod tests {
         for expected in [
             "Welcome to oxpecker.",
             "Press C to connect to a database.",
-            "C connect  R run  E edit  N new buffer  Q quit  ? help",
+            "C connect  F find  R run  E edit  N new buffer  Q quit  ? help",
             "┌ ▶ Context",
             "Session",
             "Not connected",
