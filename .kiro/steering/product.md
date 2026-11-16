@@ -33,11 +33,11 @@ In scope for the first release:
 - Browsing schema objects through the find overlay, the relationship view, and the context strip.
 - Viewing results in grid and record views, and exporting them (CSV, JSON, INSERT, markdown).
 - Query history, snippets, and transaction visibility.
+- Server administration and monitoring. Not yet specified. The first item is the activity view in issue #30. Roles, backups, and replication need their own requirements before work starts.
 
 Out of scope:
 
 - psql backslash-command compatibility.
-- Server administration (roles, backups, replication).
 - Multi-user or networked collaboration.
 - A plugin API.
 - Windows support in the first release.

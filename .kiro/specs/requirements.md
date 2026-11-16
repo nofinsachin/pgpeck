@@ -359,7 +359,6 @@ This document covers the first usable release. Requirement IDs from the UX requi
 ## Out of Scope
 
 - psql backslash-command compatibility.
-- Server administration (roles, backups, replication).
 - Multi-user or networked collaboration.
 - A plugin API.
 - Windows support.
