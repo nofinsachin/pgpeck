@@ -23,6 +23,10 @@ pub enum Command {
         doc: DocId,
         sql: String,
     },
+    /// Read the per-database statistics for the session pane.
+    Stats {
+        conn: ConnId,
+    },
     Cancel {
         conn: ConnId,
     },

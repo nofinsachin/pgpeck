@@ -13,8 +13,12 @@ pub const MIN_SIZE: (u16, u16) = (60, 15);
 /// Width below which the context strip collapses to a single line (R10.7).
 const NARROW_WIDTH: u16 = 80;
 
-/// Height of the context pane, borders included: four lines of text.
-const CONTEXT_HEIGHT: u16 = 6;
+/// Height of the context and session panes, borders included: five lines of text.
+const CONTEXT_HEIGHT: u16 = 7;
+
+/// The least the context pane keeps, and the least the session pane keeps.
+const CONTEXT_MIN_WIDTH: u16 = 36;
+const SESSION_MIN_WIDTH: u16 = 28;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Areas {
@@ -22,6 +26,7 @@ pub struct Areas {
     pub message: Option<Rect>,
     pub editor: Option<Rect>,
     pub context: Option<Rect>,
+    pub session: Option<Rect>,
     pub results: Option<Rect>,
     pub hint: Rect,
     pub status: Rect,
@@ -40,6 +45,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         message: None,
         editor: None,
         context: None,
+        session: None,
         results: None,
         hint,
         status,
@@ -52,6 +58,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         match state.focus {
             Pane::Editor => areas.editor = Some(pane),
             Pane::Context => areas.context = Some(pane),
+            Pane::Session => areas.session = Some(pane),
             Pane::Results => areas.results = Some(pane),
         }
         return areas;
@@ -59,7 +66,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
 
     let context_height = match (state.show_context, body.width < NARROW_WIDTH) {
         (false, _) => 0,
-        (true, true) => 3,
+        (true, true) => 5,
         (true, false) => CONTEXT_HEIGHT,
     };
     let results = if state.show_results {
@@ -74,7 +81,18 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         results,
     ])
     .areas(body);
-    areas.context = state.show_context.then_some(context);
+    if state.show_context {
+        // The session has more to show than the context, so it gets the larger
+        // share. The context keeps enough room for its welcome line.
+        let context_width = (context.width * 2 / 5)
+            .max(CONTEXT_MIN_WIDTH)
+            .min(context.width.saturating_sub(SESSION_MIN_WIDTH));
+        let [left, right] =
+            Split::horizontal([Constraint::Length(context_width), Constraint::Min(1)])
+                .areas(context);
+        areas.context = Some(left);
+        areas.session = Some(right);
+    }
     areas.editor = Some(editor);
     areas.results = state.show_results.then_some(results_area);
     areas

@@ -8,10 +8,10 @@ use std::time::Instant;
 use crate::command::{Command, DocId};
 use crate::complete::{self, Candidate, KeywordSource};
 use crate::config::Config;
-use crate::db::{ConnId, ConnectionInfo};
+use crate::db::{ConnId, ConnectionInfo, SessionStats, TxState};
 use crate::editor::{display_col, Buffer, EditCmd, Pos};
 use crate::events::{Background, Event};
-use crate::form::ConnectForm;
+use crate::form::{ConnectForm, SessionForm};
 use crate::keymap::{Action, KeyChord, Keymap, Scope};
 use crate::layout;
 use crate::picker::{self, Picker};
@@ -25,6 +25,7 @@ use crate::sql;
 pub enum Pane {
     Editor,
     Context,
+    Session,
     Results,
 }
 
@@ -33,6 +34,7 @@ impl Pane {
         match self {
             Pane::Editor => "Editor",
             Pane::Context => "Context",
+            Pane::Session => "Session",
             Pane::Results => "Results",
         }
     }
@@ -41,6 +43,7 @@ impl Pane {
         match self {
             Pane::Editor => Scope::Editor,
             Pane::Context => Scope::Context,
+            Pane::Session => Scope::Session,
             Pane::Results => Scope::Results,
         }
     }
@@ -98,6 +101,18 @@ pub struct Connection {
     pub profile: Profile,
     pub status: ConnStatus,
     pub info: Option<ConnectionInfo>,
+    /// Updated after every run (R16.1).
+    pub tx: TxState,
+    /// Per-database numbers for the session pane. `None` until first read.
+    pub stats: Option<SessionStats>,
+    pub stats_error: Option<String>,
+    /// A read is in flight.
+    pub stats_busy: bool,
+    pub stats_at: Option<Instant>,
+    /// The user asked to cancel while a statistics read was in flight. A
+    /// cancel request hits whatever the server runs at that moment, so it is
+    /// sent once the read is over.
+    pub cancel_after_stats: bool,
 }
 
 impl Connection {
@@ -119,7 +134,42 @@ pub enum Dialog {
     Picker(Picker),
     /// Connection details typed by hand.
     Form(ConnectForm),
+    /// Database and user of the current connection.
+    Session(SessionForm),
     Password(PasswordPrompt),
+    /// Asks before a risky statement runs (R15).
+    Confirm(Confirm),
+}
+
+/// A statement waiting for the user's yes (R15.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirm {
+    pub conn: ConnId,
+    pub doc: DocId,
+    pub sql: String,
+    /// The connection's name, shown with the statement.
+    pub label: String,
+    pub production: bool,
+    pub risk: sql::Assessment,
+    pub input: String,
+    pub error: Option<String>,
+}
+
+impl Confirm {
+    /// Why the statement needs a yes, one sentence each.
+    pub fn reasons(&self) -> Vec<&'static str> {
+        let mut reasons = Vec::new();
+        if self.production && self.risk.writes {
+            reasons.push("This is a production connection and the statement changes data.");
+        }
+        if self.risk.no_where {
+            reasons.push("UPDATE or DELETE without WHERE changes every row.");
+        }
+        if self.risk.destructive {
+            reasons.push("DROP or TRUNCATE removes data or objects for good.");
+        }
+        reasons
+    }
 }
 
 /// A statement in flight.
@@ -184,6 +234,11 @@ impl State {
         self.connection(self.doc().connection?)
     }
 
+    #[cfg(test)]
+    pub fn connection_mut_for_tests(&mut self, id: ConnId) -> &mut Connection {
+        self.connection_mut(id).expect("connection")
+    }
+
     fn connection_mut(&mut self, id: ConnId) -> Option<&mut Connection> {
         self.connections.iter_mut().find(|c| c.id == id)
     }
@@ -230,6 +285,7 @@ impl State {
         let mut panes = Vec::new();
         if self.show_context {
             panes.push(Pane::Context);
+            panes.push(Pane::Session);
         }
         panes.push(Pane::Editor);
         if self.show_results {
@@ -275,11 +331,56 @@ impl App {
             Event::Resize(w, h) => self.state.size = (w, h),
             Event::Key(key) => self.on_key(KeyChord::from_event(&key)),
             Event::Paste(text) => self.on_paste(&text),
-            Event::Tick => {}
+            Event::Tick => self.on_tick(),
             Event::Background(background) => self.on_background(background),
         }
         self.scroll_to_cursor();
         std::mem::take(&mut self.pending)
+    }
+
+    /// Refreshes the session numbers now and then, when nothing else is using
+    /// the connection.
+    fn on_tick(&mut self) {
+        if let Some(conn) = self.state.doc().connection {
+            self.request_stats(conn, false);
+        }
+    }
+
+    /// Asks for the session statistics. They run on the user's own connection,
+    /// so never while a statement runs and never inside a transaction: a read
+    /// there could start the transaction's snapshot or fail in a failed one.
+    fn request_stats(&mut self, conn: ConnId, force: bool) -> bool {
+        if self.state.running.is_some() {
+            return false;
+        }
+        let interval = self.config.session.refresh_seconds;
+        let Some(c) = self.state.connection_mut(conn) else {
+            return false;
+        };
+        if c.status != ConnStatus::Connected || c.tx != TxState::Idle || c.stats_busy {
+            return false;
+        }
+        if !force {
+            let due = interval > 0
+                && c.stats_at
+                    .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(interval));
+            if !due {
+                return false;
+            }
+        }
+        c.stats_busy = true;
+        c.stats_at = Some(Instant::now());
+        self.pending.push(Command::Stats { conn });
+        true
+    }
+
+    fn refresh_session(&mut self) {
+        let Some(conn) = self.state.doc().connection else {
+            return self.notice("Not connected");
+        };
+        if !self.request_stats(conn, true) {
+            self.notice("Cannot refresh now: a statement or transaction is using the connection");
+        }
     }
 
     fn on_key(&mut self, chord: KeyChord) {
@@ -427,6 +528,15 @@ impl App {
                 Action::FocusEditor,
                 Action::BufferNew,
                 Action::AppQuit,
+                Action::HelpToggle,
+            ],
+            Pane::Session => &[
+                Action::SessionEditDatabase,
+                Action::SessionEditUser,
+                Action::SessionRefresh,
+                Action::TransactionRollback,
+                Action::ConnectionOpen,
+                Action::FocusCommands,
                 Action::HelpToggle,
             ],
             Pane::Results => &[
@@ -598,6 +708,10 @@ impl App {
                 self.state.show_context = true;
                 self.state.focus = Pane::Context;
             }
+            Action::FocusSession => {
+                self.state.show_context = true;
+                self.state.focus = Pane::Session;
+            }
             Action::FocusResults => {
                 self.state.show_results = true;
                 self.state.focus = Pane::Results;
@@ -620,6 +734,10 @@ impl App {
             Action::HelpScrollDown => self.scroll_help(false, false),
             Action::HelpPageUp => self.scroll_help(true, true),
             Action::HelpPageDown => self.scroll_help(false, true),
+            Action::TransactionRollback => self.rollback(),
+            Action::SessionRefresh => self.refresh_session(),
+            Action::SessionEditDatabase => self.edit_session(0),
+            Action::SessionEditUser => self.edit_session(1),
             Action::ConnectionOpen => self.open_picker(),
             Action::ConnectionReconnect => self.reconnect(),
             Action::QueryRun => self.run_statement(),
@@ -666,7 +784,8 @@ impl App {
             | Action::DialogCancel
             | Action::DialogBackspace
             | Action::DialogClear
-            | Action::PickerSaveProfile => {}
+            | Action::PickerSaveProfile
+            | Action::PickerEditProfile => {}
             Action::CompletionTrigger => self.refresh_completion(true),
             Action::CompletionAccept => self.accept_completion(),
             Action::CompletionDismiss => self.state.completion = None,
@@ -727,6 +846,12 @@ impl App {
             profile: profile.clone(),
             status: ConnStatus::Connecting,
             info: None,
+            tx: TxState::Idle,
+            stats: None,
+            stats_error: None,
+            stats_busy: false,
+            stats_at: None,
+            cancel_after_stats: false,
         });
         self.state.dialog = None;
         self.notice(format!("Connecting to {label}…"));
@@ -776,7 +901,7 @@ impl App {
     fn on_dialog_key(&mut self, chord: KeyChord) {
         let scope = match self.state.dialog {
             Some(Dialog::Picker(_)) => Scope::Picker,
-            Some(Dialog::Form(_)) => Scope::Form,
+            Some(Dialog::Form(_) | Dialog::Session(_) | Dialog::Confirm(_)) => Scope::Form,
             Some(Dialog::Password(_)) => Scope::Prompt,
             None => return,
         };
@@ -795,6 +920,11 @@ impl App {
         match &mut self.state.dialog {
             Some(Dialog::Picker(p)) => p.push(c),
             Some(Dialog::Form(f)) => f.type_char(c),
+            Some(Dialog::Session(f)) => f.type_char(c),
+            Some(Dialog::Confirm(c0)) => {
+                c0.input.push(c);
+                c0.error = None;
+            }
             Some(Dialog::Password(p)) => {
                 p.input = Secret::new(format!("{}{c}", p.input.expose()));
                 p.error = None;
@@ -817,8 +947,14 @@ impl App {
             }
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
             (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
+            (Action::DialogNext | Action::DialogPrev, Some(Dialog::Session(f))) => f.next_field(),
             (Action::DialogBackspace, Some(Dialog::Picker(p))) => p.backspace(),
             (Action::DialogBackspace, Some(Dialog::Form(f))) => f.backspace(),
+            (Action::DialogBackspace, Some(Dialog::Session(f))) => f.backspace(),
+            (Action::DialogBackspace, Some(Dialog::Confirm(c))) => {
+                c.input.pop();
+                c.error = None;
+            }
             (Action::DialogBackspace, Some(Dialog::Password(p))) => {
                 let mut text = p.input.expose().to_string();
                 text.pop();
@@ -826,11 +962,18 @@ impl App {
             }
             (Action::DialogClear, Some(Dialog::Picker(p))) => p.clear(),
             (Action::DialogClear, Some(Dialog::Form(f))) => f.clear(),
+            (Action::DialogClear, Some(Dialog::Session(f))) => f.clear(),
+            (Action::DialogClear, Some(Dialog::Confirm(c))) => c.input.clear(),
             (Action::DialogClear, Some(Dialog::Password(p))) => p.input = Secret::new(""),
             (Action::DialogCancel, Some(Dialog::Picker(_))) => self.state.dialog = None,
             // Esc in the form goes back to the list.
             (Action::DialogCancel, Some(Dialog::Form(_))) => {
                 self.state.dialog = Some(Dialog::Picker(Picker::default()));
+            }
+            (Action::DialogCancel, Some(Dialog::Session(_))) => self.state.dialog = None,
+            (Action::DialogCancel, Some(Dialog::Confirm(_))) => {
+                self.state.dialog = None;
+                self.notice("Cancelled. Nothing was run");
             }
             (Action::DialogCancel, Some(Dialog::Password(p))) => {
                 let conn = p.conn;
@@ -840,8 +983,11 @@ impl App {
             }
             (Action::DialogSubmit, Some(Dialog::Picker(_))) => self.submit_picker(),
             (Action::DialogSubmit, Some(Dialog::Form(_))) => self.submit_form(),
+            (Action::DialogSubmit, Some(Dialog::Session(_))) => self.submit_session(),
+            (Action::DialogSubmit, Some(Dialog::Confirm(_))) => self.submit_confirm(),
             (Action::DialogSubmit, Some(Dialog::Password(_))) => self.submit_password(),
             (Action::PickerSaveProfile, Some(Dialog::Picker(_))) => self.save_uri_as_profile(),
+            (Action::PickerEditProfile, Some(Dialog::Picker(_))) => self.edit_selected_profile(),
             _ => {}
         }
     }
@@ -855,6 +1001,17 @@ impl App {
             Ok(profile) => profile,
             Err(message) => return self.set_form_error(message),
         };
+        if let Some(original) = &form.editing {
+            if let Err(message) = self.state.profiles.update(&original.name, profile) {
+                return self.set_form_error(message);
+            }
+            self.pending.push(Command::SaveProfiles {
+                contents: self.state.profiles.to_toml(),
+            });
+            let name = form.name.trim().to_string();
+            self.state.dialog = Some(Dialog::Picker(Picker::default()));
+            return self.notice(format!("Saved changes to `{name}`"));
+        }
         if !form.name.trim().is_empty() {
             if let Err(message) = self.state.profiles.add(profile.clone()) {
                 return self.set_form_error(message);
@@ -864,6 +1021,65 @@ impl App {
             });
         }
         self.connect(profile, None);
+    }
+
+    /// Opens the form for the saved profile selected in the picker.
+    fn edit_selected_profile(&mut self) {
+        let reconnect = self.reconnect_label();
+        let Some(Dialog::Picker(picker)) = &self.state.dialog else {
+            return;
+        };
+        match picker.current(&self.state.profiles, reconnect.as_deref()) {
+            Some(picker::Item::Profile(name)) => {
+                if let Some(profile) = self.state.profiles.get(&name) {
+                    self.state.dialog = Some(Dialog::Form(ConnectForm::edit(profile)));
+                }
+            }
+            _ => self.notice("Select a saved connection to edit it"),
+        }
+    }
+
+    /// Opens the session form on the database (0) or the user (1).
+    fn edit_session(&mut self, focus: usize) {
+        let Some(conn) = self.state.active_connection() else {
+            return self.notice("Not connected. Connect first, then change the session");
+        };
+        if matches!(
+            conn.status,
+            ConnStatus::Connecting | ConnStatus::AwaitingPassword
+        ) {
+            return self.notice("Wait for the connection to finish first");
+        }
+        // What the server reports is more exact than what the profile says.
+        let (database, user) = match &conn.info {
+            Some(info) => (info.database.clone(), info.user.clone()),
+            None => (
+                conn.profile.database.clone().unwrap_or_default(),
+                conn.profile
+                    .user
+                    .clone()
+                    .unwrap_or_else(crate::runtime::default_user),
+            ),
+        };
+        self.state.dialog = Some(Dialog::Session(SessionForm::new(&database, &user, focus)));
+    }
+
+    fn submit_session(&mut self) {
+        let Some(Dialog::Session(form)) = &self.state.dialog else {
+            return;
+        };
+        let Some(current) = self.state.active_connection() else {
+            return;
+        };
+        match form.apply(&current.profile) {
+            // The password is looked up or asked for again: it can differ per user.
+            Ok(profile) => self.connect(profile, None),
+            Err(message) => {
+                if let Some(Dialog::Session(form)) = &mut self.state.dialog {
+                    form.error = Some(message);
+                }
+            }
+        }
     }
 
     fn set_form_error(&mut self, message: String) {
@@ -1005,6 +1221,7 @@ impl App {
                 );
                 c.info = Some(info);
                 self.notice(text);
+                self.request_stats(conn, true);
                 // Ready to write SQL: move from the commands pane to the editor.
                 if self.state.doc().connection == Some(conn) && self.state.focus == Pane::Context {
                     self.state.focus = Pane::Editor;
@@ -1055,12 +1272,43 @@ impl App {
                     self.state.running = None;
                 }
                 let cancelled = output.error.as_ref().is_some_and(|e| e.is_cancellation());
+                let tx = output.tx;
+                if let Some(c) = self.state.connection_mut(conn) {
+                    c.tx = tx;
+                }
+                // A statement may have changed the numbers.
+                self.request_stats(conn, true);
+                if tx == TxState::Failed {
+                    let key = self
+                        .keymap
+                        .key_for(Action::TransactionRollback, &[Scope::Global], |_| true)
+                        .map(|k| format!(" Press {k} to roll back"))
+                        .unwrap_or_default();
+                    self.notice(format!("The transaction failed.{key}"));
+                }
                 if let Some(d) = self.state.docs.iter_mut().find(|d| d.id == doc) {
                     d.results = Some(Results::new(output));
                     self.state.show_results = true;
                 }
                 if cancelled {
                     self.notice("Query cancelled");
+                }
+            }
+            Background::Stats { conn, result } => {
+                if let Some(c) = self.state.connection_mut(conn) {
+                    c.stats_busy = false;
+                    match result {
+                        Ok(stats) => {
+                            c.stats = Some(stats);
+                            c.stats_error = None;
+                        }
+                        // Someone's cancel hit the read. Not worth reporting.
+                        Err(e) if e.is_cancellation() => {}
+                        Err(e) => c.stats_error = Some(e.message),
+                    }
+                    if std::mem::take(&mut c.cancel_after_stats) {
+                        self.pending.push(Command::Cancel { conn });
+                    }
                 }
             }
             Background::ProfilesSaved(Err(message)) => {
@@ -1109,22 +1357,86 @@ impl App {
         if text.trim().is_empty() {
             return self.notice("Nothing to run. Put the cursor in a statement");
         }
+        let risk = sql::assess(&text);
+        let profile = &self.state.connection(conn).map(|c| c.profile.clone());
+        let production = profile.as_ref().is_some_and(|p| p.production);
+        if (production && risk.writes) || risk.no_where || risk.destructive {
+            let label = profile
+                .as_ref()
+                .map_or_else(String::new, |p| p.shown_name().to_string());
+            self.state.completion = None;
+            self.state.dialog = Some(Dialog::Confirm(Confirm {
+                conn,
+                doc: doc_id,
+                sql: text,
+                label,
+                production,
+                risk,
+                input: String::new(),
+                error: None,
+            }));
+            return;
+        }
+        self.start_run(conn, doc_id, text);
+    }
+
+    fn start_run(&mut self, conn: ConnId, doc: DocId, sql: String) {
         self.state.running = Some(Running {
             conn,
-            doc: doc_id,
+            doc,
             started: Instant::now(),
         });
         self.state.completion = None;
-        self.pending.push(Command::Run {
-            conn,
-            doc: doc_id,
-            sql: text,
-        });
+        self.pending.push(Command::Run { conn, doc, sql });
+    }
+
+    /// Only `y` or `yes` confirms. Enter alone never does (R15.5).
+    fn submit_confirm(&mut self) {
+        let Some(Dialog::Confirm(confirm)) = &mut self.state.dialog else {
+            return;
+        };
+        let answer = confirm.input.trim().to_ascii_lowercase();
+        if answer != "y" && answer != "yes" {
+            confirm.error = Some("Type y or yes to run it, or press Esc to cancel".to_string());
+            return;
+        }
+        let (conn, doc, text) = (confirm.conn, confirm.doc, confirm.sql.clone());
+        self.state.dialog = None;
+        if self.state.running.is_some() {
+            return self.notice("A statement is already running");
+        }
+        self.start_run(conn, doc, text);
+    }
+
+    /// Ends the open or failed transaction of this buffer's connection (R16.3).
+    fn rollback(&mut self) {
+        let doc = self.state.doc();
+        let doc_id = doc.id;
+        let Some(conn) = doc
+            .connection
+            .and_then(|id| self.state.connection(id))
+            .filter(|c| c.status == ConnStatus::Connected)
+        else {
+            return self.notice("Not connected");
+        };
+        if conn.tx == TxState::Idle {
+            return self.notice("No transaction is open");
+        }
+        let id = conn.id;
+        if self.state.running.is_some() {
+            return self.notice("A statement is already running");
+        }
+        self.start_run(id, doc_id, "ROLLBACK".to_string());
     }
 
     fn cancel_query(&mut self) {
         if let Some(running) = &self.state.running {
-            self.pending.push(Command::Cancel { conn: running.conn });
+            let conn = running.conn;
+            match self.state.connection_mut(conn) {
+                // The server would cancel the statistics read, not the statement.
+                Some(c) if c.stats_busy => c.cancel_after_stats = true,
+                _ => self.pending.push(Command::Cancel { conn }),
+            }
             self.notice("Cancelling…");
         }
     }
@@ -1238,15 +1550,17 @@ mod tests {
         let mut config = Config::default();
         config.editor.tab_indent = false;
         let mut a = app_with(config);
-        // Panes run top to bottom: Context, Editor, Results.
+        // Panes run left to right, then down: Context, Session, Editor, Results.
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Results);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Context);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(a.state.focus, Pane::Session);
+        press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Editor);
         press(&mut a, KeyCode::BackTab, KeyModifiers::SHIFT);
-        assert_eq!(a.state.focus, Pane::Context);
+        assert_eq!(a.state.focus, Pane::Session);
     }
 
     #[test]
@@ -1254,7 +1568,9 @@ mod tests {
         let mut a = app();
         alt(&mut a, '1');
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Editor);
+        assert_eq!(a.state.focus, Pane::Session);
+        alt(&mut a, '4');
+        assert_eq!(a.state.focus, Pane::Session);
     }
 
     #[test]
@@ -1953,6 +2269,7 @@ mod tests {
             sets,
             error,
             elapsed: Duration::from_millis(12),
+            tx: crate::db::TxState::Idle,
         }
     }
 
@@ -2304,6 +2621,11 @@ mod tests {
     fn ctrl_c_cancels_only_a_running_statement() {
         let mut a = app();
         let conn = connected(&mut a);
+        // The first statistics read is over, so nothing else is on the connection.
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Ok(sample_stats()),
+        }));
         assert!(
             send(&mut a, KeyCode::Char('c'), KeyModifiers::CONTROL).is_empty(),
             "nothing to cancel"
@@ -2696,6 +3018,426 @@ mod tests {
         send(app, KeyCode::Char(c), KeyModifiers::NONE)
     }
 
+    // -- the session pane -------------------------------------------------------
+
+    #[test]
+    fn the_session_pane_takes_focus_and_changes_the_database_and_user() {
+        let mut a = landing();
+        let conn = connected(&mut a);
+        a.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('4'),
+            KeyModifiers::ALT,
+        )));
+        assert_eq!(a.state.focus, Pane::Session);
+        key(&mut a, 'd');
+        let Some(Dialog::Session(form)) = &a.state.dialog else {
+            panic!("expected the session form")
+        };
+        assert_eq!(
+            (form.database.as_str(), form.user.as_str(), form.focus),
+            ("app", "alice", 0)
+        );
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        type_into(&mut a, "sales");
+        send(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        type_into(&mut a, "bob");
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let [Command::Disconnect { conn: old }, Command::Connect { profile, .. }] = &commands[..]
+        else {
+            panic!("{commands:?}")
+        };
+        assert_eq!(*old, conn);
+        assert_eq!(
+            (profile.database.as_deref(), profile.user.as_deref()),
+            (Some("sales"), Some("bob"))
+        );
+        assert!(a.state.dialog.is_none());
+        assert!(a.state.profiles.is_empty(), "nothing is saved");
+    }
+
+    #[test]
+    fn u_in_the_session_pane_starts_on_the_user_and_esc_leaves_it() {
+        let mut a = landing();
+        connected(&mut a);
+        a.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('4'),
+            KeyModifiers::ALT,
+        )));
+        key(&mut a, 'u');
+        let Some(Dialog::Session(form)) = &a.state.dialog else {
+            panic!("expected the session form")
+        };
+        assert_eq!(form.focus, 1);
+        send(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(a.state.dialog.is_none());
+        send(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(a.state.focus, Pane::Context);
+    }
+
+    #[test]
+    fn the_session_cannot_be_changed_without_a_connection() {
+        let mut a = landing();
+        a.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('4'),
+            KeyModifiers::ALT,
+        )));
+        key(&mut a, 'd');
+        assert!(a.state.dialog.is_none());
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("Not connected"));
+    }
+
+    #[test]
+    fn an_empty_user_is_refused_and_keeps_the_form_open() {
+        let mut a = landing();
+        connected(&mut a);
+        a.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('4'),
+            KeyModifiers::ALT,
+        )));
+        key(&mut a, 'u');
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(commands.is_empty());
+        let Some(Dialog::Session(form)) = &a.state.dialog else {
+            panic!("expected the session form")
+        };
+        assert!(form.error.is_some());
+    }
+
+    // -- confirmations and transactions ----------------------------------------
+
+    /// Connected as in `connected`, with the profile optionally marked production.
+    fn connected_production(app: &mut App, production: bool) -> ConnId {
+        let conn = connected(app);
+        if let Some(c) = app.state.connection_mut(conn) {
+            c.profile.production = production;
+        }
+        conn
+    }
+
+    fn run_sql(app: &mut App, text: &str) -> Vec<Command> {
+        type_into(app, text);
+        press_run(app)
+    }
+
+    #[test]
+    fn a_plain_select_runs_at_once_even_on_production() {
+        let mut a = app();
+        connected_production(&mut a, true);
+        let commands = run_sql(&mut a, "select 1");
+        assert!(matches!(&commands[..], [Command::Run { .. }]));
+        assert!(a.state.dialog.is_none());
+    }
+
+    #[test]
+    fn a_write_on_production_needs_a_yes() {
+        let mut a = app();
+        connected_production(&mut a, true);
+        let commands = run_sql(&mut a, "update t set a = 1 where id = 2");
+        assert!(commands.is_empty());
+        let Some(Dialog::Confirm(c)) = &a.state.dialog else {
+            panic!("expected a confirmation")
+        };
+        assert!(c.production && c.reasons().len() == 1);
+        assert!(c.sql.contains("update t"), "the statement is shown");
+        // Enter alone does nothing (R15.5).
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(commands.is_empty());
+        let Some(Dialog::Confirm(c)) = &a.state.dialog else {
+            panic!("still asking")
+        };
+        assert!(c.error.is_some());
+        // Anything but y or yes does not confirm.
+        type_into(&mut a, "no");
+        assert!(send(&mut a, KeyCode::Enter, KeyModifiers::NONE).is_empty());
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        type_into(&mut a, "Yes");
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(&commands[..], [Command::Run { sql, .. }] if sql.contains("update t")));
+        assert!(a.state.dialog.is_none() && a.state.running.is_some());
+    }
+
+    #[test]
+    fn a_write_off_production_runs_without_asking() {
+        let mut a = app();
+        connected_production(&mut a, false);
+        let commands = run_sql(&mut a, "update t set a = 1 where id = 2");
+        assert!(matches!(&commands[..], [Command::Run { .. }]));
+    }
+
+    #[test]
+    fn update_without_where_and_drop_ask_on_any_connection() {
+        for text in [
+            "delete from t",
+            "update t set a = 1",
+            "drop table t",
+            "truncate t",
+        ] {
+            let mut a = app();
+            connected_production(&mut a, false);
+            assert!(run_sql(&mut a, text).is_empty(), "{text}");
+            assert!(matches!(a.state.dialog, Some(Dialog::Confirm(_))), "{text}");
+        }
+    }
+
+    #[test]
+    fn escape_cancels_a_confirmation_and_runs_nothing() {
+        let mut a = app();
+        connected_production(&mut a, false);
+        run_sql(&mut a, "drop table t");
+        type_into(&mut a, "y");
+        let commands = send(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(commands.is_empty() && a.state.dialog.is_none());
+        assert!(a.state.running.is_none());
+    }
+
+    fn finish_with_tx(app: &mut App, conn: ConnId, tx: TxState) {
+        let doc = app.state.doc().id;
+        let mut out = output(vec![], None);
+        out.tx = tx;
+        app.update(Event::Background(Background::QueryFinished {
+            conn,
+            doc,
+            output: out,
+        }));
+    }
+
+    #[test]
+    fn the_transaction_state_follows_each_run() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        assert_eq!(
+            a.state.active_connection().map(|c| c.tx),
+            Some(TxState::Idle)
+        );
+        finish_with_tx(&mut a, conn, TxState::Open);
+        assert_eq!(
+            a.state.active_connection().map(|c| c.tx),
+            Some(TxState::Open)
+        );
+        finish_with_tx(&mut a, conn, TxState::Failed);
+        assert_eq!(
+            a.state.active_connection().map(|c| c.tx),
+            Some(TxState::Failed)
+        );
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("roll back"));
+        finish_with_tx(&mut a, conn, TxState::Idle);
+        assert_eq!(
+            a.state.active_connection().map(|c| c.tx),
+            Some(TxState::Idle)
+        );
+    }
+
+    #[test]
+    fn rollback_runs_only_while_a_transaction_is_open() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        assert!(send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT).is_empty());
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("No transaction"));
+        finish_with_tx(&mut a, conn, TxState::Failed);
+        let commands = send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        assert!(matches!(&commands[..], [Command::Run { sql, .. }] if sql == "ROLLBACK"));
+    }
+
+    // -- session statistics -----------------------------------------------------
+
+    fn sample_stats() -> SessionStats {
+        SessionStats {
+            connections: 3,
+            server_connections: 12,
+            max_connections: 100,
+            active: Some(1),
+            idle_in_transaction: Some(0),
+            oldest_transaction_secs: None,
+            size_bytes: 1_288_490_188,
+            cache_hit_percent: Some(99.2),
+            deadlocks: 0,
+            uptime_secs: 3 * 86400 + 4 * 3600,
+            sees_all_sessions: true,
+        }
+    }
+
+    fn stats_commands(commands: &[Command]) -> usize {
+        commands
+            .iter()
+            .filter(|c| matches!(c, Command::Stats { .. }))
+            .count()
+    }
+
+    /// Like `connected`, but returns what the Connected event asked for.
+    fn connected_commands(app: &mut App) -> (ConnId, Vec<Command>) {
+        open_picker(app);
+        type_into(app, "postgres://alice:pw@127.0.0.1/app");
+        let commands = send(app, KeyCode::Enter, KeyModifiers::NONE);
+        let Some(Command::Connect { conn, .. }) = commands.into_iter().next() else {
+            panic!("expected a Connect command");
+        };
+        let commands = app.update(Event::Background(Background::Connected {
+            conn,
+            info: info(),
+        }));
+        (conn, commands)
+    }
+
+    #[test]
+    fn connecting_reads_the_statistics_and_stores_them() {
+        let mut a = app();
+        let (conn, commands) = connected_commands(&mut a);
+        assert_eq!(stats_commands(&commands), 1);
+        assert!(a.state.connection(conn).is_some_and(|c| c.stats_busy));
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Ok(sample_stats()),
+        }));
+        let c = a.state.connection(conn).expect("connection");
+        assert!(!c.stats_busy && c.stats == Some(sample_stats()));
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Err(crate::db::DbError::new("denied")),
+        }));
+        let c = a.state.connection(conn).expect("connection");
+        assert_eq!(c.stats_error.as_deref(), Some("denied"));
+        assert!(c.stats.is_some(), "the last good numbers stay");
+    }
+
+    #[test]
+    fn the_numbers_refresh_on_the_configured_schedule_only() {
+        let mut config = Config::default();
+        config.session.refresh_seconds = 5;
+        let mut a = app_with(config);
+        let (conn, _) = connected_commands(&mut a);
+        // A read is in flight, then done. Not yet due.
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Ok(sample_stats()),
+        }));
+        assert_eq!(stats_commands(&a.update(Event::Tick)), 0);
+        // Pretend the last read was long ago.
+        a.state.connection_mut(conn).expect("c").stats_at =
+            Some(Instant::now() - std::time::Duration::from_secs(6));
+        assert_eq!(stats_commands(&a.update(Event::Tick)), 1);
+        assert_eq!(stats_commands(&a.update(Event::Tick)), 0, "one at a time");
+    }
+
+    #[test]
+    fn a_refresh_interval_of_zero_turns_the_automatic_refresh_off() {
+        let mut config = Config::default();
+        config.session.refresh_seconds = 0;
+        let mut a = app_with(config);
+        let (conn, _) = connected_commands(&mut a);
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Ok(sample_stats()),
+        }));
+        a.state.connection_mut(conn).expect("c").stats_at =
+            Some(Instant::now() - std::time::Duration::from_secs(3600));
+        assert_eq!(stats_commands(&a.update(Event::Tick)), 0);
+        let commands = send(&mut a, KeyCode::F(5), KeyModifiers::NONE);
+        assert_eq!(stats_commands(&commands), 1, "the key still works");
+    }
+
+    #[test]
+    fn nothing_is_read_while_a_statement_runs_or_a_transaction_is_open() {
+        let mut a = app();
+        let (conn, _) = connected_commands(&mut a);
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Ok(sample_stats()),
+        }));
+        a.state.connection_mut(conn).expect("c").stats_at = None;
+        a.state.connection_mut(conn).expect("c").tx = TxState::Open;
+        assert_eq!(
+            stats_commands(&a.update(Event::Tick)),
+            0,
+            "transaction open"
+        );
+        let commands = send(&mut a, KeyCode::F(5), KeyModifiers::NONE);
+        assert_eq!(stats_commands(&commands), 0);
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("Cannot refresh"));
+        a.state.connection_mut(conn).expect("c").tx = TxState::Idle;
+        a.state.running = Some(Running {
+            conn,
+            doc: a.state.doc().id,
+            started: Instant::now(),
+        });
+        assert_eq!(
+            stats_commands(&a.update(Event::Tick)),
+            0,
+            "statement running"
+        );
+    }
+
+    #[test]
+    fn a_finished_statement_refreshes_the_numbers() {
+        let mut a = app();
+        let (conn, _) = connected_commands(&mut a);
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Ok(sample_stats()),
+        }));
+        let doc = a.state.doc().id;
+        let commands = a.update(Event::Background(Background::QueryFinished {
+            conn,
+            doc,
+            output: output(vec![], None),
+        }));
+        assert_eq!(stats_commands(&commands), 1);
+    }
+
+    #[test]
+    fn a_cancel_during_a_statistics_read_waits_for_the_read() {
+        let mut a = app();
+        let (conn, _) = connected_commands(&mut a); // the read is in flight
+        type_into(&mut a, "select pg_sleep(30)");
+        let commands = press_run(&mut a);
+        assert!(matches!(&commands[..], [Command::Run { .. }]));
+        let commands = send(&mut a, KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(commands.is_empty(), "it would hit the statistics read");
+        let commands = a.update(Event::Background(Background::Stats {
+            conn,
+            result: Ok(sample_stats()),
+        }));
+        assert!(
+            matches!(&commands[..], [Command::Cancel { .. }]),
+            "{commands:?}"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_statistics_read_is_not_reported() {
+        let mut a = app();
+        let (conn, _) = connected_commands(&mut a);
+        let mut cancelled = crate::db::DbError::new("canceling statement due to user request");
+        cancelled.sqlstate = Some("57014".to_string());
+        a.update(Event::Background(Background::Stats {
+            conn,
+            result: Err(cancelled),
+        }));
+        let c = a.state.connection(conn).expect("c");
+        assert!(c.stats_error.is_none() && !c.stats_busy);
+    }
+
     #[test]
     fn oxpecker_starts_on_the_commands_pane() {
         let a = landing();
@@ -2895,6 +3637,34 @@ mod tests {
             Some(Dialog::Form(f)) => f,
             other => panic!("expected the form, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_saved_connection_can_be_edited_from_the_picker() {
+        let mut a = landing();
+        let mut saved = Profile::new("dev");
+        saved.host = "old-host".to_string();
+        saved.ssl_mode = profile::SslMode::Require;
+        a.state.profiles.add(saved).expect("add");
+        key(&mut a, 'c');
+        send(&mut a, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert_eq!(form(&a).host, "old-host");
+        assert_eq!(form(&a).name, "dev");
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        type_into(&mut a, "new-host");
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(
+            matches!(&commands[..], [Command::SaveProfiles { .. }]),
+            "saves without connecting: {commands:?}"
+        );
+        let p = a.state.profiles.get("dev").expect("still there");
+        assert_eq!(p.host, "new-host");
+        assert_eq!(
+            p.ssl_mode,
+            profile::SslMode::Require,
+            "other options are kept"
+        );
+        assert!(matches!(a.state.dialog, Some(Dialog::Picker(_))));
     }
 
     #[test]

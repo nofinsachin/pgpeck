@@ -253,3 +253,132 @@ async fn a_dropped_connection_is_reported_once() {
         .expect("sent");
     assert!(!reason.is_empty());
 }
+
+#[tokio::test]
+async fn the_transaction_state_is_reported_after_each_run() {
+    use oxpecker::db::TxState;
+    let url = database!();
+    let (session, _) = connect(&url).await;
+
+    let out = db::run(&session, "select 1", 10).await;
+    assert_eq!(out.tx, TxState::Idle);
+
+    let out = db::run(&session, "begin", 10).await;
+    assert_eq!(out.tx, TxState::Open, "an empty transaction counts");
+
+    let out = db::run(&session, "select 1", 10).await;
+    assert_eq!(out.tx, TxState::Open);
+
+    let out = db::run(&session, "select 1/0", 10).await;
+    assert!(out.error.is_some());
+    assert_eq!(out.tx, TxState::Failed);
+
+    let out = db::run(&session, "select 1", 10).await;
+    assert_eq!(out.tx, TxState::Failed, "stays failed until rolled back");
+
+    let out = db::run(&session, "rollback", 10).await;
+    assert_eq!(out.tx, TxState::Idle);
+
+    let out = db::run(&session, "begin; select 1; commit", 10).await;
+    assert_eq!(out.tx, TxState::Idle);
+
+    // A multi-statement run that fails outside BEGIN leaves nothing open.
+    let out = db::run(&session, "select 1; select 1/0", 10).await;
+    assert_eq!(out.tx, TxState::Idle);
+}
+
+#[tokio::test]
+async fn statistics_count_only_the_connected_database() {
+    let url = database!();
+    let (admin, _) = connect(&url).await;
+    let basic = db::stats(&admin).await.expect("stats");
+    assert!(basic.connections >= 1 && basic.connections <= basic.server_connections);
+    assert!(basic.max_connections >= basic.server_connections);
+    assert!(basic.size_bytes > 0);
+    assert!(basic.uptime_secs < 10 * 365 * 86400);
+    if basic.sees_all_sessions {
+        assert!(
+            basic.active.expect("active") >= 1,
+            "this session runs the query"
+        );
+    }
+
+    // Other tests share the server, so count in a database of our own.
+    let name = format!("oxpecker_stats_{}", std::process::id());
+    let created = db::run(&admin, &format!("create database {name}"), 1).await;
+    if created.error.is_some() {
+        eprintln!("skipped the per-database part: this role cannot create databases");
+        return;
+    }
+    let mut profile = parse_uri(&url).expect("url").profile;
+    profile.database = Some(name.clone());
+    let user = profile.user.clone().expect("user");
+    let password = parse_uri(&url).expect("url").password;
+    let (mine, _) = db::connect(&profile, &user, password.as_ref(), |_| {})
+        .await
+        .expect("connect to the new database");
+    let (_second, _) = db::connect(&profile, &user, password.as_ref(), |_| {})
+        .await
+        .expect("second connection");
+
+    let stats = db::stats(&mine).await.expect("stats");
+    assert_eq!(stats.connections, 2, "only this database's connections");
+    assert!(
+        stats.server_connections > stats.connections,
+        "the server count includes the other databases: {stats:?}"
+    );
+    assert!(stats.size_bytes > 0);
+
+    drop(mine);
+    drop(_second);
+    let dropped = db::run(&admin, &format!("drop database {name} with (force)"), 1).await;
+    assert!(dropped.error.is_none(), "{:?}", dropped.error);
+}
+
+#[tokio::test]
+async fn statistics_do_not_disturb_a_transaction() {
+    use oxpecker::db::TxState;
+    let url = database!();
+    let (session, _) = connect(&url).await;
+    db::run(&session, "begin", 10).await;
+    // The app skips statistics inside a transaction, but reading them must
+    // still leave it open and usable.
+    db::stats(&session).await.expect("stats");
+    let out = db::run(&session, "select 1", 10).await;
+    assert_eq!(out.tx, TxState::Open);
+    db::run(&session, "rollback", 10).await;
+}
+
+#[tokio::test]
+async fn a_plain_role_gets_numbers_but_not_other_roles_activity() {
+    let url = database!();
+    let (admin, info) = connect(&url).await;
+    let role = format!("oxpecker_plain_{}", std::process::id());
+    let created = db::run(
+        &admin,
+        &format!("create role {role} login password 'plain-pw'"),
+        1,
+    )
+    .await;
+    if created.error.is_some() {
+        eprintln!("skipped: this role cannot create roles");
+        return;
+    }
+    let mut profile = parse_uri(&url).expect("url").profile;
+    profile.database = Some(info.database.clone());
+    let password = oxpecker::secrets::Secret::new("plain-pw");
+    let result = db::connect(&profile, &role, Some(&password), |_| {}).await;
+    let stats = match &result {
+        Ok((session, _)) => Some(db::stats(session).await),
+        Err(_) => None,
+    };
+    drop(result);
+    db::run(&admin, &format!("drop role {role}"), 1).await;
+    let Some(stats) = stats else {
+        eprintln!("skipped: the server does not let the new role log in");
+        return;
+    };
+    let stats = stats.expect("a plain role can read the statistics");
+    assert!(!stats.sees_all_sessions);
+    assert!(stats.connections >= 1 && stats.size_bytes > 0);
+}

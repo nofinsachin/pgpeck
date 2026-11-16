@@ -5,7 +5,7 @@
 # "none" to remove a default binding. Two actions on the same key in one scope
 # is a conflict, and the later one is refused.
 #
-# Scopes: global, editor, context, results, completion, picker, form, prompt,
+# Scopes: global, editor, context, session, results, completion, picker, form, prompt,
 # dialog. The context scope is the commands pane that has focus at startup.
 # The editor and global scopes cannot bind printable characters, because the
 # editor must always accept typing. Use Ctrl, Alt or function keys there.
@@ -30,6 +30,8 @@
 "alt+1" = "focus.context"
 "ctrl+2" = "focus.editor"
 "alt+2" = "focus.editor"
+"ctrl+4" = "focus.session"
+"alt+4" = "focus.session"
 "ctrl+3" = "focus.results"
 "alt+3" = "focus.results"
 "f6" = "focus.next"
@@ -48,6 +50,9 @@
 "alt+t" = "buffer.reopen"
 "ctrl+o" = "connection.open"
 "alt+o" = "connection.reconnect"
+# Ends an open or failed transaction with ROLLBACK.
+"alt+z" = "transaction.rollback"
+"f5" = "session.refresh"
 "ctrl+r" = "query.run_statement"
 # Cancels the running query. Does nothing when no query is running.
 "ctrl+c" = "query.cancel"
@@ -116,6 +121,19 @@
 "q" = "app.quit"
 "?" = "help.toggle"
 
+[session]
+# The session pane, next to the context. It shows who you are connected as
+# and lets you change the database or the user. Changing either reconnects.
+"d" = "session.edit_database"
+"enter" = "session.edit_database"
+"u" = "session.edit_user"
+"z" = "transaction.rollback"
+"c" = "connection.open"
+"e" = "focus.editor"
+"esc" = "focus.commands"
+"q" = "app.quit"
+"?" = "help.toggle"
+
 [results]
 "c" = "connection.open"
 "r" = "query.run_statement"
@@ -141,6 +159,7 @@
 "backspace" = "dialog.backspace"
 "ctrl+u" = "dialog.clear"
 "ctrl+s" = "picker.save_profile"
+"ctrl+e" = "picker.edit_profile"
 
 [form]
 "down" = "dialog.next"

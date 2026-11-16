@@ -38,6 +38,13 @@ show_context_strip = true
 # Example: password_sources = ["pgpass", "prompt"]
 password_sources = ["prompt"]
 
+[session]
+# Seconds between refreshes of the numbers in the Session pane (connections,
+# size, cache hits). They are read on your own connection, and only while it
+# is idle and no transaction is open. 0 turns the automatic refresh off. The
+# refresh key still works.
+refresh_seconds = 10
+
 [results]
 # Rows kept in memory per result. Further rows are counted but not stored, and
 # the results header says so. Range 1 to 1000000.

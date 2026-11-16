@@ -163,9 +163,7 @@ fn password_of(url: &str) -> String {
 async fn connect_run_and_see_a_grid() {
     let url = database!();
     let mut h = Harness::new();
-    assert!(h
-        .screen()
-        .contains("Welcome to oxpecker. Press C to connect to a database."));
+    assert!(h.screen().contains("Press C to connect to a database."));
 
     h.connect_with_uri(&url).await;
     let screen = h.screen();
@@ -451,7 +449,7 @@ async fn a_dropped_connection_is_reported_and_reconnect_works() {
     // The simple way back: Esc to the commands pane, then C, then Enter on "Reconnect".
     h.key(KeyCode::Esc, KeyModifiers::NONE);
     assert!(
-        h.screen().contains("Press C to connect again."),
+        h.screen().contains("disconnected") && h.screen().contains("C connect"),
         "{}",
         h.screen()
     );
@@ -629,4 +627,73 @@ async fn a_connection_made_in_the_form_can_be_saved_and_is_listed_next_time() {
     next.key(KeyCode::Char('c'), KeyModifiers::NONE);
     assert!(next.screen().contains("▶ Test DB"), "{}", next.screen());
     std::fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+#[tokio::test]
+async fn transactions_are_flagged_and_rolled_back_with_one_key() {
+    let url = database!();
+    let mut h = Harness::new();
+    h.connect_with_uri(&url).await;
+
+    h.run("begin").await;
+    let screen = h.screen();
+    assert!(screen.contains("TX OPEN"), "{screen}");
+    assert!(screen.contains("Transaction open"), "{screen}");
+
+    h.run("select 1/0").await;
+    let screen = h.screen();
+    assert!(screen.contains("TX FAILED"), "{screen}");
+    assert!(screen.contains("rolls back"), "{screen}");
+
+    h.key(KeyCode::Char('z'), KeyModifiers::ALT);
+    h.until("the rollback", |a| {
+        a.state.running.is_none()
+            && a.state
+                .active_connection()
+                .is_some_and(|c| c.tx == oxpecker::db::TxState::Idle)
+    })
+    .await;
+    let screen = h.screen();
+    assert!(
+        !screen.contains("TX FAILED") && !screen.contains("TX OPEN"),
+        "{screen}"
+    );
+}
+
+#[tokio::test]
+async fn a_delete_without_where_waits_for_a_yes() {
+    let url = database!();
+    let mut h = Harness::new();
+    h.connect_with_uri(&url).await;
+    h.run("create temp table oxpecker_confirm (a int)").await;
+
+    h.feed(Event::Paste("delete from oxpecker_confirm".to_string()));
+    h.key(KeyCode::Char('a'), KeyModifiers::CONTROL);
+    h.key(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    assert!(
+        h.app.state.running.is_none(),
+        "nothing runs before the answer"
+    );
+    let screen = h.screen();
+    assert!(
+        screen.contains("Confirm") && screen.contains("delete from oxpecker_confirm"),
+        "{screen}"
+    );
+
+    h.enter();
+    assert!(
+        h.app.state.running.is_none(),
+        "Enter alone does not confirm"
+    );
+    h.type_text("yes");
+    h.enter();
+    h.until("the delete", |a| {
+        a.state.running.is_none()
+            && a.state
+                .doc()
+                .results
+                .as_ref()
+                .is_some_and(|r| r.output.sets.iter().any(|s| s.tag == "DELETE 0"))
+    })
+    .await;
 }

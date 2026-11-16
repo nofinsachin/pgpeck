@@ -1,15 +1,15 @@
-┌ Context ─────────────────────────────────────────────────────────────────────┐
-│Welcome to oxpecker. Press C to connect to a database.                        │
-│Press Esc to get back to these commands.                                      │
-│                                                                              │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌ Context ─────────────────────────┐┌ Session ─────────────────────────────────┐
+│Welcome to oxpecker.              ││Not connected                             │
+│Press C to connect to a database. ││                                          │
+│Press Esc for commands.           ││                                          │
+│                                  ││                                          │
+│                                  ││                                          │
+└──────────────────────────────────┘└──────────────────────────────────────────┘
 ┌ ▶ Editor ────────────────────────────────────────────────────────────────────┐
 │1 -- users per day                                                            │
-│2 select id, name                                                             │
-│3   from users                                                                │
-│4    where name = 'a;b' and n > 10;                                           │
-│                                                                              │
+│2 SELECT id, name                                                             │
+│3   FROM users                                                                │
+│4    WHERE name = 'a;b' AND n > 10;                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ Results ─────────────────────────────────────────────────────────────────────┐
 │No results yet. Run a statement with Ctrl+R.                                  │

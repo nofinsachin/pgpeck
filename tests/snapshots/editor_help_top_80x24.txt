@@ -1,12 +1,12 @@
-┌ Context ─────────────────────────────────────────────────────────────────────┐
-│Welcome to oxpecker. Press C to connect to a database.                        │
+┌ Context ─────────────────────────┐┌ Session ─────────────────────────────────┐
+│Welcome to oxpecker.              ││Not connected                             │
 │Pr┌───────────────────────────────── Help ─────────────────────────────────┐  │
-│  │editor keys                                                             │  │
+│Pr│editor keys                                                             │  │
 │  │  Alt+/             show suggestions      completion.trigger            │  │
-└──│  Alt+C             copy                  editor.copy                   │──┘
-┌ ▶│  Backspace         delete backward       editor.backspace              │──┐
-│1 │  Ctrl+A            select all            editor.select_all             │  │
-│  │  Ctrl+End          end of text           editor.move_buffer_end        │  │
+│  │  Alt+C             copy                  editor.copy                   │  │
+└──│  Backspace         delete backward       editor.backspace              │──┘
+┌ ▶│  Ctrl+A            select all            editor.select_all             │──┐
+│1 │  Ctrl+End          end of text           editor.move_buffer_end        │  │
 │  │  Ctrl+Home         start of text         editor.move_buffer_start      │  │
 │  │  Ctrl+Insert       copy                  editor.copy                   │  │
 │  │  Ctrl+Left         word left             editor.move_word_left         │  │
@@ -19,6 +19,6 @@
 │  │  Ctrl+V            paste                 editor.paste                  │  │
 │  │  Ctrl+X            cut                   editor.cut                    │  │
 │  │  Ctrl+Y            redo                  editor.redo                   │  │
-└──└─────────────────── Up/Down scroll  ? close  (1/53) ────────────────────┘──┘
+└──└─────────────────── Up/Down scroll  ? close  (1/57) ────────────────────┘──┘
 Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 1, Col 1

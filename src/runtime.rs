@@ -81,9 +81,19 @@ impl Runtime {
                                 "the connection is closed. Reconnect and try again",
                             )),
                             elapsed: std::time::Duration::ZERO,
+                            tx: db::TxState::Idle,
                         },
                     };
                     this.send(Background::QueryFinished { conn, doc, output });
+                });
+            }
+            Command::Stats { conn } => {
+                tokio::spawn(async move {
+                    let result = match this.session(conn) {
+                        Some(session) => db::stats(&session).await,
+                        None => Err(db::DbError::new("the connection is closed")),
+                    };
+                    this.send(Background::Stats { conn, result });
                 });
             }
             Command::Cancel { conn } => {

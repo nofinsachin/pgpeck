@@ -3,8 +3,8 @@
 A fast, keyboard-driven terminal client for PostgreSQL, written in Rust.
 
 Status: early development. You can connect to a database, run statements and
-read the results. Not done yet: TLS (remote hosts need `ssl_mode = "disable"`),
-paged result browsing, the schema explorer, history and safety confirmations.
+read the results. Not done yet: TLS (`ssl_mode` defaults to `disable`; remote hosts refuse `prefer`),
+paged result browsing, the schema explorer and history.
 
 ## Build and run
 
@@ -35,18 +35,38 @@ The keys, all shown on screen:
 
 | Where | Key | Does |
 |---|---|---|
-| Commands pane (top, where you start) | `C` | connect |
+| Context pane (top left, where you start) | `C` | connect |
 | | `R` | run the statement under the cursor |
 | | `E` or `Enter` | go to the editor |
 | | `N` | new buffer |
 | | `Q` | quit |
 | | `?` | help |
+| Session pane (top right, `Alt+4` or `Tab`) | `D` or `Enter` | change the database (reconnects) |
+| | `U` | change the user (reconnects) |
+| | `F5` | refresh the numbers now |
+| | `Esc` | back to the context pane |
+| | `Z` | roll back an open or failed transaction |
+| Any pane | `Alt+Z` | roll back an open or failed transaction |
 | Editor | `Ctrl+R` | run the statement under the cursor, or the selection |
 | | `Esc` | back to the commands pane |
 | | `Ctrl+C` | cancel a running statement |
 | Results | `C` `R` `E` `Q` | as above, plus arrows, `[` and `]` to move |
-| Connect window | type | search profiles, or paste a `postgres://` address |
+| Connect window | `Ctrl+E` | edit the selected saved connection |
+| | type | search profiles, or paste a `postgres://` address |
 | | `Ctrl+S` | save the typed address as a profile (no password) |
+
+Before a risky statement runs, oxpecker shows it with the connection name and waits for `y` or
+`yes` (Enter alone does nothing). That applies to any change on a production connection, to
+`UPDATE` or `DELETE` without `WHERE`, and to `DROP` or `TRUNCATE`. The status bar and the Session
+pane show `TX OPEN` or `TX FAILED` while a transaction is open.
+
+The Session pane shows the connected database only: its connections, active and idle-in-transaction
+sessions, size, cache hit rate, oldest open transaction and deadlocks, next to the server's
+connection count and limit, which every database on the server shares. CPU and memory are not
+shown, because PostgreSQL does not tell a client about them. The numbers refresh every
+`session.refresh_seconds` (default 10, 0 turns it off) and after each statement. They are read on
+your own connection, so never while a statement runs or a transaction is open. Seeing other
+roles' sessions needs the `pg_read_all_stats` role.
 
 Naming a connection in the details form saves it as a profile in
 `~/.config/oxpecker/connections.toml`, without a password. It is listed next time.

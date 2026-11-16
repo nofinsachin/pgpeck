@@ -1,17 +1,17 @@
-┌ ▶ Context ─────────────────────────────────────────────────────────────────────────────┐
-│Welcome to oxpecker. Press C to connect to a database.                                  │
-│                                                                                        │
-│C connect   R run   E edit SQL   N new buffer   Q quit   ? help                         │
-│                                                                                        │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Editor ─┌────────────────────────── New connection ──────────────────────────┐─────────┐
-│1        │Passwords are never saved. You are asked for it next.               │         │
-│         │                                                                    │         │
-│         │▶ Host        localhost                                             │         │
+┌ ▶ Context ───────────────────────┐┌ Session ───────────────────────────────────────────┐
+│Welcome to oxpecker.              ││Not connected                                       │
+│Press C to connect to a database. ││                                                    │
+│                                  ││                                                    │
+│                                  ││                                                    │
+│         ┌────────────────────────── New connection ──────────────────────────┐         │
+└─────────│Passwords are never saved. You are asked for it next.               │─────────┘
+┌ Editor ─│                                                                    │─────────┐
+│1        │▶ Host        localhost                                             │         │
 │         │  Port        5432                                                  │         │
 │         │  Database    (empty: same as the user)                             │         │
 │         │  User        alice                                                 │         │
-└─────────│  Save as     (empty: do not save this connection)                  │─────────┘
+│         │  Save as     (empty: do not save this connection)                  │         │
+└─────────│  SSL mode    disable  (Space to change. TLS is not supported yet)  │─────────┘
 ┌ Results │  Production  [ ] no  (Space to switch)                             │─────────┐
 │No result│                                                                    │         │
 │         │                                                                    │         │

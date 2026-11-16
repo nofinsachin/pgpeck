@@ -133,6 +133,7 @@ mod tests {
             sets,
             error,
             elapsed: Duration::from_millis(5),
+            tx: crate::db::TxState::Idle,
         }
     }
 

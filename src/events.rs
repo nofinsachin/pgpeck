@@ -9,7 +9,7 @@ use crossterm::event::{self, Event as TermEvent, KeyEvent, KeyEventKind};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::command::DocId;
-use crate::db::{ConnId, ConnectionInfo, DbError, QueryOutput};
+use crate::db::{ConnId, ConnectionInfo, DbError, QueryOutput, SessionStats};
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -48,6 +48,10 @@ pub enum Background {
         conn: ConnId,
         doc: DocId,
         output: QueryOutput,
+    },
+    Stats {
+        conn: ConnId,
+        result: Result<SessionStats, DbError>,
     },
     ProfilesSaved(Result<(), String>),
 }

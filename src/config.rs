@@ -12,6 +12,14 @@ pub struct Config {
     pub ui: UiConfig,
     pub connections: ConnectionsConfig,
     pub results: ResultsConfig,
+    pub session: SessionConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionConfig {
+    /// Seconds between refreshes of the session statistics. 0 turns the
+    /// automatic refresh off.
+    pub refresh_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +73,9 @@ impl Default for Config {
                 completion_min_chars: 2,
             },
             results: ResultsConfig { row_limit: 10_000 },
+            session: SessionConfig {
+                refresh_seconds: 10,
+            },
             connections: ConnectionsConfig {
                 password_sources: Source::default_order(),
             },
@@ -93,6 +104,7 @@ const SCHEMA: &[(&str, &[&str])] = &[
     ("ui", &["theme", "show_hint_bar", "show_context_strip"]),
     ("connections", &["password_sources"]),
     ("results", &["row_limit"]),
+    ("session", &["refresh_seconds"]),
 ];
 
 impl Config {
@@ -180,6 +192,13 @@ impl Config {
                     .and_then(|n| usize::try_from(n).ok())
                     .filter(|n| (1..=1_000_000).contains(n))
                     .ok_or("expected a whole number from 1 to 1000000")?;
+            }
+            ("session", "refresh_seconds") => {
+                self.session.refresh_seconds = value
+                    .as_integer()
+                    .and_then(|n| u64::try_from(n).ok())
+                    .filter(|n| *n <= 3600)
+                    .ok_or("expected a whole number from 0 to 3600")?;
             }
             ("connections", "password_sources") => {
                 self.connections.password_sources = parse_sources(value)?;

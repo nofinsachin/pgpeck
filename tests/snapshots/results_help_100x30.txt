@@ -1,12 +1,12 @@
-┌ Context ─────────────────────────────────────────────────────────────────────────────────────────┐
-│Welcome to oxpecker. Press C to connect to a database.                                            │
-│Press (unbou┌───────────────────────────────── Help ─────────────────────────────────┐            │
-│            │results keys                                                            │            │
+┌ Context ─────────────────────────────┐┌ Session ─────────────────────────────────────────────────┐
+│Welcome to oxpecker.                  ││Not connected                                             │
+│Press C to c┌───────────────────────────────── Help ─────────────────────────────────┐            │
+│Press (unbou│results keys                                                            │            │
 │            │  ?                 help                  help.toggle                   │            │
-└────────────│  Down              row down              results.scroll_down           │────────────┘
-┌ Editor ────│  End               last row              results.last_row              │────────────┐
-│1           │  Home              first row             results.first_row             │            │
-│            │  Left              columns left          results.scroll_left           │            │
+│            │  Down              row down              results.scroll_down           │            │
+└────────────│  End               last row              results.last_row              │────────────┘
+┌ Editor ────│  Home              first row             results.first_row             │────────────┐
+│1           │  Left              columns left          results.scroll_left           │            │
 │            │  PageDown          page down             results.page_down             │            │
 │            │  PageUp            page up               results.page_up               │            │
 │            │  Right             columns right         results.scroll_right          │            │
@@ -22,9 +22,9 @@
 │            │  Alt+1             focus context         focus.context                 │            │
 │            │  Alt+2             edit                  focus.editor                  │            │
 │            │  Alt+3             focus results         focus.results                 │            │
+│            │  Alt+4             focus session         focus.session                 │            │
 │            │  Alt+Left          previous buffer       buffer.prev                   │            │
 │            │  Alt+O             reconnect             connection.reconnect          │            │
-│            │  Alt+Right         next buffer           buffer.next                   │            │
-└────────────└─────────────────── Up/Down scroll  ? close  (1/21) ────────────────────┘────────────┘
+└────────────└─────────────────── Up/Down scroll  ? close  (1/25) ────────────────────┘────────────┘
 C connect  R run  E edit  Q quit  ? help
  no connection │ focus: Results │ Ln 1, Col 1

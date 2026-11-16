@@ -190,6 +190,10 @@ async fn event_loop(
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Once a second, so the session numbers refresh on their own schedule.
+    let mut slow = tokio::time::interval(std::time::Duration::from_secs(1));
+    slow.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     while !app.state.quit {
         terminal.draw(|frame| ui::draw(frame, app, theme))?;
         let event = tokio::select! {
@@ -198,6 +202,7 @@ async fn event_loop(
                 None => break, // input thread stopped, and it has logged why
             },
             _ = ticker.tick(), if app.state.running.is_some() => events::Event::Tick,
+            _ = slow.tick() => events::Event::Tick,
         };
         for command in app.update(event) {
             runtime.execute(command);

@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
-use crate::db::{DbError, ResultSet};
+use crate::db::{DbError, ResultSet, SessionStats, TxState};
 use crate::editor::{cell_width, display_col, Pos};
 use crate::keymap::{Action, KeyChord, Scope};
 use crate::layout;
@@ -18,6 +18,12 @@ use crate::theme::Theme;
 
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
+    // Paint the whole screen first. Text without its own color uses `value`,
+    // so it stays readable whatever the terminal's own colors are.
+    frame.render_widget(
+        Block::new().style(Style::new().fg(theme.value).bg(theme.background)),
+        area,
+    );
     let areas = layout::compute(area, &app.state, &app.config);
 
     if let Some(message) = areas.message {
@@ -37,6 +43,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     if let Some(rect) = areas.context {
         draw_context(frame, app, theme, rect);
     }
+    if let Some(rect) = areas.session {
+        draw_session(frame, app, theme, rect);
+    }
     if let Some(rect) = areas.results {
         draw_results(frame, app, theme, rect);
     }
@@ -53,7 +62,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     match &app.state.dialog {
         Some(Dialog::Picker(picker)) => draw_picker(frame, app, theme, picker, area),
         Some(Dialog::Form(form)) => draw_form(frame, app, theme, form, area),
+        Some(Dialog::Session(form)) => draw_session_form(frame, app, theme, form, area),
         Some(Dialog::Password(_)) => draw_password(frame, app, theme, area),
+        Some(Dialog::Confirm(confirm)) => draw_confirm(frame, app, theme, confirm, area),
         None => {}
     }
 }
@@ -121,39 +132,26 @@ fn command_key(app: &App, action: Action) -> String {
 
 fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
-    let bold = Style::new().add_modifier(Modifier::BOLD);
-    // The single keys below only work while this pane has focus.
-    let has_focus = app.state.focus == Pane::Context;
-    let keys = |actions: &[(Action, &str)]| {
-        let text: Vec<String> = actions
-            .iter()
-            .map(|(action, what)| format!("{} {what}", command_key(app, *action)))
-            .collect();
-        Line::styled(text.join("   "), dim)
-    };
-    let lines: Vec<Line> = match app.state.active_connection() {
+    let bold = Style::new().fg(theme.value).add_modifier(Modifier::BOLD);
+    let label = Style::new().fg(theme.label);
+    let value = Style::new().fg(theme.value);
+    let st = &app.state;
+    let lines: Vec<Line> = match st.active_connection() {
         None => {
-            let mut lines = vec![Line::from(vec![
-                Span::styled("Welcome to oxpecker. ", bold),
-                Span::raw(format!(
-                    "Press {} to connect to a database.",
-                    command_key(app, Action::ConnectionOpen)
-                )),
-            ])];
-            if has_focus {
-                lines.push(Line::raw(""));
-                lines.push(keys(&[
-                    (Action::ConnectionOpen, "connect"),
-                    (Action::QueryRun, "run"),
-                    (Action::FocusEditor, "edit SQL"),
-                    (Action::BufferNew, "new buffer"),
-                    (Action::AppQuit, "quit"),
-                    (Action::HelpToggle, "help"),
-                ]));
-            } else {
+            let mut lines = vec![
+                Line::styled("Welcome to oxpecker.", bold),
+                Line::styled(
+                    format!(
+                        "Press {} to connect to a database.",
+                        command_key(app, Action::ConnectionOpen)
+                    ),
+                    value,
+                ),
+            ];
+            if st.focus != Pane::Context {
                 lines.push(Line::styled(
                     format!(
-                        "Press {} to get back to these commands.",
+                        "Press {} for commands.",
                         key_text(app, Action::FocusCommands)
                     ),
                     dim,
@@ -161,67 +159,363 @@ fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             }
             lines
         }
-        Some(conn) => {
-            let mut lines = connection_lines(app, theme, conn);
-            if has_focus && conn.status == ConnStatus::Connected {
-                lines.push(keys(&[
-                    (Action::QueryRun, "run"),
-                    (Action::FocusEditor, "edit SQL"),
-                    (Action::ConnectionOpen, "other connection"),
-                    (Action::AppQuit, "quit"),
-                ]));
-            }
-            lines
+        Some(_) => {
+            let buffer = if st.docs.len() > 1 {
+                format!("{} ({}/{})", st.doc().name, st.active + 1, st.docs.len())
+            } else {
+                st.doc().name.clone()
+            };
+            let editor = st.editor();
+            let all = editor.text();
+            let statement = sql::statement_at(&all, editor.cursor_offset())
+                .map(|s| {
+                    s.text(&all)
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .filter(|s| !s.is_empty());
+            vec![
+                Line::from(vec![
+                    Span::styled("Buffer     ", label),
+                    Span::styled(buffer, bold),
+                ]),
+                match statement {
+                    Some(text) => {
+                        Line::from(vec![Span::styled("Statement  ", label), Span::styled(text, value)])
+                    }
+                    None => Line::from(vec![
+                        Span::styled("Statement  ", label),
+                        Span::styled("none under the cursor", dim),
+                    ]),
+                },
+            ]
         }
     };
     let body = Paragraph::new(lines).block(pane_block(app, theme, Pane::Context));
     frame.render_widget(body, area);
 }
 
-fn connection_lines<'a>(app: &App, theme: &Theme, conn: &'a Connection) -> Vec<Line<'a>> {
+/// The session pane: who you are connected as, and how busy this database is.
+/// The numbers are for the connected database only. CPU and memory are shared
+/// by every database on the server and PostgreSQL cannot report them, so the
+/// shared resource shown is the server's connection limit.
+fn draw_session(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
-    let bold = Style::new().add_modifier(Modifier::BOLD);
-    let mut lines = vec![Line::from(vec![
-        Span::styled(conn.label().to_string(), bold),
-        Span::styled(format!("  {}", status_word(&conn.status)), dim),
-    ])];
-    match (&conn.status, &conn.info) {
-        (ConnStatus::Connected, Some(info)) => {
-            lines.push(Line::raw(format!(
-                "{}:{}  PostgreSQL {}",
-                info.host, info.port, info.server_version
-            )));
-            lines.push(Line::raw(format!(
-                "database {}  user {}",
-                info.database, info.user
-            )));
-            let tls = if info.tls {
-                "TLS on"
+    let block = pane_block(app, theme, Pane::Session);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let Some(conn) = app.state.active_connection() else {
+        frame.render_widget(Paragraph::new(Line::styled("Not connected", dim)), inner);
+        return;
+    };
+    let rollback_key = app
+        .keymap
+        .key_for(Action::TransactionRollback, &[Scope::Global], |_| true)
+        .map_or_else(|| "(unbound)".to_string(), key_label);
+    let view = SessionView::new(theme, conn, &rollback_key);
+    if inner.width >= TWO_COLUMNS {
+        let [left, right] = ratatui::layout::Layout::horizontal([
+            ratatui::layout::Constraint::Length(IDENTITY_WIDTH),
+            ratatui::layout::Constraint::Min(1),
+        ])
+        .areas(inner);
+        frame.render_widget(Paragraph::new(view.identity()), left);
+        frame.render_widget(Paragraph::new(view.server()), right);
+    } else {
+        frame.render_widget(Paragraph::new(view.compact()), inner);
+    }
+}
+
+/// Inside the session pane, wide enough for identity and server side by side.
+const TWO_COLUMNS: u16 = 70;
+const IDENTITY_WIDTH: u16 = 22;
+
+struct SessionView<'a> {
+    theme: &'a Theme,
+    conn: &'a Connection,
+    rollback_key: &'a str,
+    host: String,
+    port: u16,
+    database: String,
+    user: String,
+}
+
+impl<'a> SessionView<'a> {
+    fn new(theme: &'a Theme, conn: &'a Connection, rollback_key: &'a str) -> Self {
+        // Before the server answers, show what the profile asks for.
+        let (host, port, database, user) = match &conn.info {
+            Some(i) => (i.host.clone(), i.port, i.database.clone(), i.user.clone()),
+            None => (
+                conn.profile.host.clone(),
+                conn.profile.port,
+                conn.profile.database.clone().unwrap_or_default(),
+                conn.profile.user.clone().unwrap_or_default(),
+            ),
+        };
+        Self {
+            theme,
+            conn,
+            rollback_key,
+            host,
+            port,
+            database,
+            user,
+        }
+    }
+
+    fn dim(&self) -> Style {
+        Style::new().fg(self.theme.dimmed)
+    }
+
+    fn label(&self) -> Style {
+        Style::new().fg(self.theme.label)
+    }
+
+    fn value(&self) -> Style {
+        Style::new().fg(self.theme.value)
+    }
+
+    fn warn(&self) -> Style {
+        Style::new()
+            .fg(self.theme.warn)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    fn status_style(&self) -> Style {
+        match self.conn.status {
+            ConnStatus::Connected => Style::new().fg(self.theme.ok),
+            ConnStatus::Connecting | ConnStatus::AwaitingPassword => {
+                Style::new().fg(self.theme.warn)
+            }
+            ConnStatus::Failed(_) | ConnStatus::Closed(_) => Style::new().fg(self.theme.error),
+        }
+    }
+
+    fn alert(&self) -> Style {
+        Style::new()
+            .fg(self.theme.error)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    fn head(&self) -> Line<'static> {
+        let mut spans = vec![
+            Span::styled(
+                self.conn.profile.shown_name().to_string(),
+                self.value().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  {}", status_word(&self.conn.status)),
+                self.status_style(),
+            ),
+        ];
+        if self.conn.profile.production {
+            spans.push(Span::styled("  PROD", self.alert()));
+        }
+        Line::from(spans)
+    }
+
+    fn failure(&self) -> Option<Line<'static>> {
+        match &self.conn.status {
+            ConnStatus::Failed(m) | ConnStatus::Closed(m) => {
+                Some(Line::styled(m.clone(), Style::new().fg(self.theme.error)))
+            }
+            _ => None,
+        }
+    }
+
+    fn labelled(&self, label: &str, value: String) -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("{label:<12}"), self.label()),
+            Span::styled(value, self.value_style(label)),
+        ])
+    }
+
+    fn value_style(&self, _label: &str) -> Style {
+        self.value()
+    }
+
+    /// A transaction left open is flagged until it ends (R16.2).
+    fn transaction(&self, with_key: bool) -> Option<Line<'static>> {
+        let text = match (self.conn.tx, with_key) {
+            (TxState::Idle, _) => return None,
+            (TxState::Open, _) => "open".to_string(),
+            (TxState::Failed, true) => format!("FAILED. {} rolls back", self.rollback_key),
+            (TxState::Failed, false) => "FAILED".to_string(),
+        };
+        Some(Line::from(vec![
+            Span::styled(format!("{:<12}", "Transaction"), self.label()),
+            Span::styled(text, self.alert()),
+        ]))
+    }
+
+    fn host_line(&self) -> Line<'static> {
+        let mut spans = vec![Span::styled(
+            match (&self.conn.status, &self.conn.info) {
+                (ConnStatus::Connected, Some(i)) => {
+                    format!(
+                        "{}:{}  PostgreSQL {}",
+                        self.host, self.port, i.server_version
+                    )
+                }
+                _ => format!("{}:{}", self.host, self.port),
+            },
+            self.dim(),
+        )];
+        if self.conn.info.as_ref().is_some_and(|i| !i.tls)
+            && self.conn.status == ConnStatus::Connected
+        {
+            spans.push(Span::styled("  TLS off", self.warn()));
+        }
+        Line::from(spans)
+    }
+
+    /// Why there are no numbers, or `None` when there are.
+    fn no_stats(&self) -> Option<Line<'static>> {
+        if self.conn.status != ConnStatus::Connected {
+            return None;
+        }
+        match (&self.conn.stats, &self.conn.stats_error) {
+            (Some(_), _) => None,
+            (None, Some(e)) => Some(Line::styled(
+                format!("Statistics unavailable: {e}"),
+                Style::new().fg(self.theme.error),
+            )),
+            (None, None) => Some(Line::styled("Reading statistics…", self.dim())),
+        }
+    }
+
+    fn connections_text(s: &SessionStats) -> String {
+        format!(
+            "{} here · {} of {} on server",
+            s.connections, s.server_connections, s.max_connections
+        )
+    }
+
+    fn connections_short(s: &SessionStats) -> String {
+        format!(
+            "{} here · {}/{} on server",
+            s.connections, s.server_connections, s.max_connections
+        )
+    }
+
+    /// The server is near its connection limit, which every database shares.
+    fn crowded(s: &SessionStats) -> bool {
+        s.max_connections > 0 && s.server_connections * 100 >= s.max_connections * 80
+    }
+
+    fn activity_text(s: &SessionStats) -> String {
+        match (s.active, s.idle_in_transaction) {
+            (Some(a), Some(i)) if s.sees_all_sessions => {
+                format!("{a} active · {i} idle in transaction")
+            }
+            _ => "needs the pg_read_all_stats role".to_string(),
+        }
+    }
+
+    fn size_text(s: &SessionStats) -> String {
+        let cache = s
+            .cache_hit_percent
+            .map_or_else(|| "n/a".to_string(), |p| format!("{p:.1}%"));
+        format!("{} · cache hit {cache}", format_bytes(s.size_bytes))
+    }
+
+    fn age_text(s: &SessionStats) -> String {
+        let oldest = match (s.oldest_transaction_secs, s.sees_all_sessions) {
+            (Some(secs), _) => format_age(secs),
+            (None, true) => "none".to_string(),
+            (None, false) => "n/a".to_string(),
+        };
+        format!(
+            "oldest tx {oldest} · up {} · deadlocks {}",
+            format_age(s.uptime_secs),
+            s.deadlocks
+        )
+    }
+
+    /// Left column: who you are.
+    fn identity(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![self.head()];
+        lines.extend(self.failure());
+        lines.push(self.labelled("Database", self.database.clone()));
+        lines.push(self.labelled("User", self.user.clone()));
+        lines.extend(self.transaction(false));
+        lines
+    }
+
+    /// Right column: the server and how busy this database is.
+    fn server(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![self.host_line()];
+        if let Some(s) = &self.conn.stats {
+            let style = if Self::crowded(s) {
+                self.warn()
             } else {
-                "TLS off: traffic is not encrypted"
+                Style::new()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:<12}", "Connections"), self.label()),
+                Span::styled(Self::connections_text(s), style),
+            ]));
+            lines.push(self.labelled("Activity", Self::activity_text(s)));
+            lines.push(self.labelled("Size", Self::size_text(s)));
+            lines.push(self.labelled("Health", Self::age_text(s)));
+        }
+        lines.extend(self.no_stats());
+        lines
+    }
+
+    /// One column, for a narrow pane. Most useful first, so a short pane
+    /// cuts the least important.
+    fn compact(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![self.head()];
+        lines.extend(self.failure());
+        lines.push(Line::from(vec![
+            Span::styled(self.database.clone(), self.value()),
+            Span::styled(" · ", self.dim()),
+            Span::styled(self.user.clone(), self.value()),
+        ]));
+        lines.extend(self.transaction(true));
+        if let Some(s) = &self.conn.stats {
+            let style = if Self::crowded(s) {
+                self.warn()
+            } else {
+                Style::new()
             };
             lines.push(Line::styled(
-                tls,
-                if info.tls {
-                    dim
-                } else {
-                    Style::new().fg(theme.error)
-                },
+                format!("Conns {}", Self::connections_short(s)),
+                style,
             ));
+            lines.push(Line::styled(Self::size_text(s), Style::new()));
         }
-        (ConnStatus::Failed(message) | ConnStatus::Closed(message), _) => {
-            lines.push(Line::styled(message.clone(), Style::new().fg(theme.error)));
-            lines.push(Line::styled(
-                format!(
-                    "Press {} to connect again.",
-                    command_key(app, Action::ConnectionOpen)
-                ),
-                dim,
-            ));
-        }
-        _ => {}
+        lines.extend(self.no_stats());
+        lines.push(self.host_line());
+        lines
     }
-    lines
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// A span of time in its two largest units: `12s`, `5m`, `3h 20m`, `2d 4h`.
+fn format_age(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m", secs / 60),
+        3600..=86399 => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
+        _ => format!("{}d {}h", secs / 86400, secs % 86400 / 3600),
+    }
 }
 
 fn status_word(status: &ConnStatus) -> &'static str {
@@ -456,18 +750,25 @@ fn draw_grid(
     }
 
     let separator = || Span::styled(" │ ", Style::new().fg(theme.dimmed));
-    let header_style = Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    // Bold on a filled bar, so the header stands out even without color.
+    let header_style = Style::new()
+        .fg(theme.header_fg)
+        .bg(theme.header_bg)
+        .add_modifier(Modifier::BOLD);
     let mut header = Vec::new();
     for (n, (index, width)) in visible.iter().enumerate() {
         if n > 0 {
-            header.push(separator());
+            header.push(Span::styled(" │ ", header_style));
         }
         header.push(Span::styled(
             fit(&clean_cell(&set.columns[*index]), *width),
             header_style,
         ));
     }
-    frame.render_widget(Paragraph::new(Line::from(header)), body.header);
+    frame.render_widget(
+        Paragraph::new(Line::from(header)).style(header_style),
+        body.header,
+    );
 
     let null_style = Style::new()
         .fg(theme.null)
@@ -477,7 +778,14 @@ fn draw_grid(
         .iter()
         .skip(first_row)
         .take(usize::from(body.rows.height))
-        .map(|row| {
+        .enumerate()
+        .map(|(line_no, row)| {
+            // Alternate row shading helps the eye follow a row across columns.
+            let band = if (first_row + line_no) % 2 == 1 {
+                Style::new().bg(theme.row_alt_bg)
+            } else {
+                Style::new()
+            };
             let mut spans = Vec::new();
             for (n, (index, width)) in visible.iter().enumerate() {
                 if n > 0 {
@@ -490,7 +798,7 @@ fn draw_grid(
                     None => Span::styled(fit("NULL", *width), null_style),
                 });
             }
-            Line::from(spans)
+            Line::from(spans).style(band)
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), body.rows);
@@ -578,9 +886,9 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
             width = usize::from(area.gutter_width) - 1
         );
         let number_style = if index == cursor.line {
-            Style::new().add_modifier(Modifier::BOLD)
+            Style::new().fg(theme.focus).add_modifier(Modifier::BOLD)
         } else {
-            Style::new().fg(theme.dimmed)
+            Style::new().fg(theme.line_number)
         };
 
         let mut builder = SpanBuilder::default();
@@ -594,10 +902,16 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
             while tokens.get(token_index).is_some_and(|t| t.end <= absolute) {
                 token_index += 1;
             }
-            let mut style = tokens
-                .get(token_index)
-                .filter(|t| t.start <= absolute)
-                .map_or(Style::new(), |t| token_style(t.kind, theme));
+            let token = tokens.get(token_index).filter(|t| t.start <= absolute);
+            let mut style = token.map_or(Style::new(), |t| token_style(t.kind, theme));
+            // Keywords are shown in capitals. The buffer itself is not changed.
+            let mut ch = ch;
+            if token.is_some_and(|t| t.kind == TokenKind::Keyword) {
+                let mut upper = ch.to_uppercase();
+                if let (Some(u), None) = (upper.next(), upper.next()) {
+                    ch = u;
+                }
+            }
             if is_selected(selection, index, col, line.chars().count()) {
                 style = style.add_modifier(Modifier::REVERSED);
             }
@@ -625,7 +939,11 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
             cell += width;
         }
         spans.extend(builder.finish());
-        rows.push(Line::from(spans));
+        let mut line = Line::from(spans);
+        if index == cursor.line {
+            line = line.style(Style::new().bg(theme.cursor_line_bg));
+        }
+        rows.push(line);
     }
 
     let body = Rect {
@@ -823,6 +1141,14 @@ fn draw_status_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         cursor.line + 1,
         cursor.col + 1
     );
+    match st.active_connection().map(|c| c.tx) {
+        Some(TxState::Open) => text.push_str(" │ TX OPEN"),
+        Some(TxState::Failed) => text.push_str(&format!(
+            " │ TX FAILED ({} rolls back)",
+            global_key(app, Action::TransactionRollback)
+        )),
+        _ => {}
+    }
     if let Some(running) = st.running.as_ref().filter(|r| r.doc == st.doc().id) {
         text.push_str(&format!(
             " │ running {}",
@@ -981,8 +1307,9 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
             .map_or(String::new(), |k| k.to_string())
     };
     let footer = format!(
-        "{} connect  {} close  {} save address as profile",
+        "{} connect  {} edit  {} close  {} save address as profile",
         key(Action::DialogSubmit),
+        key(Action::PickerEditProfile),
         key(Action::DialogCancel),
         key(Action::PickerSaveProfile)
     );
@@ -1002,10 +1329,14 @@ fn draw_form(
     area: Rect,
 ) {
     let dim = Style::new().fg(theme.dimmed);
-    let popup = layout::centered(area, 70, 14);
+    let popup = layout::centered(area, 70, 15);
     frame.render_widget(Clear, popup);
     let block = Block::bordered()
-        .title(" New connection ")
+        .title(if form.editing.is_some() {
+            " Edit connection "
+        } else {
+            " New connection "
+        })
         .title_alignment(Alignment::Center)
         .border_style(Style::new().fg(theme.focus));
     let inner = block.inner(popup);
@@ -1032,6 +1363,7 @@ fn draw_form(
         "(empty: same as the user)",
         "",
         "(empty: do not save this connection)",
+        "(Space to change. TLS is not supported yet)",
         "(Space to switch)",
     ];
     let label_width = crate::form::LABELS
@@ -1061,7 +1393,9 @@ fn draw_form(
                 },
             )),
             None => {
-                let mark = if form.production {
+                let mark = if index == 5 {
+                    form.ssl_mode.name()
+                } else if form.production {
                     "[x] yes, mark as production"
                 } else {
                     "[ ] no"
@@ -1098,7 +1432,99 @@ fn draw_form(
     frame.render_widget(
         Paragraph::new(Line::styled(
             format!(
-                "{} next field  {} connect  {} back",
+                "{} next field  {} {}  {} back",
+                key(Action::DialogNext),
+                key(Action::DialogSubmit),
+                if form.editing.is_some() {
+                    "save"
+                } else {
+                    "connect"
+                },
+                key(Action::DialogCancel)
+            ),
+            dim,
+        )),
+        row(inner.height - 1),
+    );
+}
+
+fn draw_session_form(
+    frame: &mut Frame,
+    app: &App,
+    theme: &Theme,
+    form: &crate::form::SessionForm,
+    area: Rect,
+) {
+    let dim = Style::new().fg(theme.dimmed);
+    let popup = layout::centered(area, 60, 9);
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Change session ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.focus));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height < 7 {
+        return;
+    }
+    let row = |n: u16| Rect {
+        y: inner.y + n,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            "Saving connects again. You may be asked for the password.",
+            dim,
+        )),
+        row(0),
+    );
+    let label_width = crate::form::SESSION_LABELS
+        .iter()
+        .map(|l| l.len())
+        .max()
+        .unwrap_or(0);
+    for (index, label) in crate::form::SESSION_LABELS.iter().enumerate() {
+        let focused = form.focus == index;
+        let marker = if focused { "▶ " } else { "  " };
+        let text = form.text(index);
+        let mut spans = vec![Span::styled(
+            format!("{marker}{label:<label_width$}  "),
+            if focused {
+                Style::new().add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            },
+        )];
+        if text.is_empty() {
+            spans.push(Span::styled("(empty: same as the user)", dim));
+        } else {
+            spans.push(Span::raw(text.to_string()));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), row(2 + index as u16));
+    }
+    let text = form.text(form.focus);
+    let x = inner.x + (2 + label_width + 2 + text.chars().map(cell_width).sum::<usize>()) as u16;
+    frame.set_cursor_position((
+        x.min(inner.right().saturating_sub(1)),
+        inner.y + 2 + form.focus as u16,
+    ));
+    if let Some(error) = &form.error {
+        frame.render_widget(
+            Paragraph::new(error.clone())
+                .style(Style::new().fg(theme.error).add_modifier(Modifier::BOLD)),
+            row(5),
+        );
+    }
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Form], |_| true)
+            .map_or(String::new(), key_label)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            format!(
+                "{} next field  {} reconnect  {} cancel",
                 key(Action::DialogNext),
                 key(Action::DialogSubmit),
                 key(Action::DialogCancel)
@@ -1106,6 +1532,93 @@ fn draw_form(
             dim,
         )),
         row(inner.height - 1),
+    );
+}
+
+fn draw_confirm(
+    frame: &mut Frame,
+    app: &App,
+    theme: &Theme,
+    confirm: &crate::app::Confirm,
+    area: Rect,
+) {
+    let dim = Style::new().fg(theme.dimmed);
+    let danger = Style::new().fg(theme.error).add_modifier(Modifier::BOLD);
+    let reasons = confirm.reasons();
+    // Statement lines, at most 6, each cut to the box.
+    let statement: Vec<&str> = confirm
+        .sql
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let shown = statement.len().min(6);
+    let height = (shown + reasons.len() + 8) as u16;
+    let popup = layout::centered(area, 72, height);
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Confirm ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.error));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let width = usize::from(inner.width);
+    let mut lines: Vec<Line> = vec![Line::from(vec![
+        Span::styled("Connection  ", dim),
+        Span::styled(
+            confirm.label.clone(),
+            Style::new().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(if confirm.production { "  PROD" } else { "" }, danger),
+    ])];
+    lines.push(Line::raw(""));
+    for line in statement.iter().take(shown) {
+        lines.push(Line::raw(format!(
+            "  {}",
+            fit(line.trim_end(), width.saturating_sub(2))
+        )));
+    }
+    if statement.len() > shown {
+        lines.push(Line::styled(
+            format!("  … {} more lines", statement.len() - shown),
+            dim,
+        ));
+    }
+    lines.push(Line::raw(""));
+    for reason in &reasons {
+        lines.push(Line::styled(fit(reason, width), danger));
+    }
+    lines.push(Line::raw(""));
+    let prompt = format!("Run it? Type y or yes: {}", confirm.input);
+    let prompt_row = lines.len() as u16;
+    let prompt_width: usize = prompt.chars().map(cell_width).sum();
+    lines.push(Line::raw(prompt));
+    if let Some(error) = &confirm.error {
+        lines.push(Line::styled(fit(error, width), danger));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+    frame.set_cursor_position((
+        (inner.x + prompt_width as u16).min(inner.right().saturating_sub(1)),
+        inner.y + prompt_row,
+    ));
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Form], |_| true)
+            .map_or(String::new(), key_label)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            format!(
+                "{} run (after y or yes)  {} cancel",
+                key(Action::DialogSubmit),
+                key(Action::DialogCancel)
+            ),
+            dim,
+        )),
+        Rect {
+            y: inner.bottom().saturating_sub(1),
+            height: 1,
+            ..inner
+        },
     );
 }
 
@@ -1299,8 +1812,8 @@ mod tests {
         }
     }
 
-    /// Screen row of the editor's top border. The context pane above it is 6 rows.
-    const EDITOR_TOP: u16 = 6;
+    /// Screen row of the editor's top border. The context row above it is 7 rows.
+    const EDITOR_TOP: u16 = 7;
 
     /// The style at a position inside the editor text (row 0 is its first line).
     fn editor_style(app: &App, width: u16, height: u16, x: u16, row: u16) -> Style {
@@ -1314,9 +1827,12 @@ mod tests {
     fn the_screen_at_startup_invites_you_to_connect() {
         let out = render(&landing(80, 24), 80, 24);
         for expected in [
-            "Welcome to oxpecker. Press C to connect to a database.",
-            "C connect   R run   E edit SQL   N new buffer   Q quit   ? help",
+            "Welcome to oxpecker.",
+            "Press C to connect to a database.",
+            "C connect  R run  E edit  N new buffer  Q quit  ? help",
             "┌ ▶ Context",
+            "Session",
+            "Not connected",
             "No results yet. Run a statement with Ctrl+R.",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
@@ -1324,7 +1840,9 @@ mod tests {
         // The panes run top to bottom: where you are, what you write, the results.
         let at = |title: &str| out.find(title).unwrap_or_else(|| panic!("no {title}"));
         assert!(
-            at("Context") < at("Editor") && at("Editor") < at("Results"),
+            at("Context") < at("Session")
+                && at("Session") < at("Editor")
+                && at("Editor") < at("Results"),
             "{out}"
         );
         assert_snapshot("landing_80x24", &out);
@@ -1355,7 +1873,7 @@ mod tests {
             "[PROD]",
             "local dev",
             "New connection: enter the details",
-            "Enter connect  Esc close",
+            "Enter connect  Ctrl+E edit  Esc close",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
@@ -1405,6 +1923,210 @@ mod tests {
         key(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
         key(&mut a, KeyCode::Enter, KeyModifiers::NONE);
         assert!(render(&a, 90, 26).contains("The port must be a number from 1 to 65535"));
+    }
+
+    /// A landing app with an open connection to alice@app.
+    fn connected_app(width: u16, height: u16) -> App {
+        let mut a = landing(width, height);
+        key(&mut a, KeyCode::Char('c'), KeyModifiers::NONE);
+        type_text(&mut a, "postgres://alice@127.0.0.1:5432/app");
+        let commands = a.update(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        let crate::command::Command::Connect { conn, .. } = commands[0].clone() else {
+            panic!("connect")
+        };
+        a.update(Event::Background(crate::events::Background::Connected {
+            conn,
+            info: crate::db::ConnectionInfo {
+                host: "127.0.0.1".to_string(),
+                port: 5432,
+                database: "app".to_string(),
+                user: "alice".to_string(),
+                server_version: "16.2".to_string(),
+                tls: false,
+            },
+        }));
+        a
+    }
+
+    #[test]
+    fn the_session_pane_shows_the_database_and_user() {
+        let a = connected_app(90, 24);
+        let out = render(&a, 90, 24);
+        for expected in [
+            "Session",
+            "app · alice",
+            "127.0.0.1:5432  PostgreSQL 16.2",
+            "Buffer     Buffer 1",
+            "Statement  none under the cursor",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert!(
+            !out.contains("other connection"),
+            "keys live in the hint bar"
+        );
+        assert_snapshot("connected_90x24", &out);
+    }
+
+    #[test]
+    fn the_focused_session_pane_and_its_form() {
+        let mut a = connected_app(90, 24);
+        key(&mut a, KeyCode::Char('4'), KeyModifiers::ALT);
+        let out = render(&a, 90, 24);
+        assert!(out.contains("┌ ▶ Session"), "{out}");
+        assert!(out.contains("D change database  U change user"), "{out}");
+        key(&mut a, KeyCode::Char('u'), KeyModifiers::NONE);
+        let out = render(&a, 90, 24);
+        assert!(
+            out.contains("Change session") && out.contains("▶ User      alice"),
+            "{out}"
+        );
+        assert_snapshot("session_form_90x24", &out);
+    }
+
+    #[test]
+    fn a_risky_statement_shows_the_connection_the_statement_and_why() {
+        let mut a = connected_app(90, 24);
+        if let Some(c) = a.state.active_connection().map(|c| c.id) {
+            let conn = a.state.connection_mut_for_tests(c);
+            conn.profile.production = true;
+        }
+        key(&mut a, KeyCode::Char('2'), KeyModifiers::ALT);
+        type_text(&mut a, "delete from orders");
+        key(&mut a, KeyCode::Char('r'), KeyModifiers::CONTROL);
+        let out = render(&a, 90, 24);
+        for expected in [
+            "Confirm",
+            "Connection  127.0.0.1  PROD",
+            "delete from orders",
+            "production connection",
+            "without WHERE",
+            "Run it? Type y or yes:",
+            "Enter run (after y or yes)  Esc cancel",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert_snapshot("confirm_90x24", &out);
+    }
+
+    #[test]
+    fn a_failed_transaction_is_flagged_in_the_session_pane_and_status_bar() {
+        let mut a = connected_app(90, 24);
+        let conn = a.state.active_connection().map(|c| c.id).expect("conn");
+        a.state.connection_mut_for_tests(conn).tx = crate::db::TxState::Failed;
+        let out = render(&a, 90, 24);
+        assert!(
+            out.contains("Transaction FAILED. Alt+Z rolls back"),
+            "{out}"
+        );
+        assert!(out.contains("TX FAILED"), "{out}");
+        assert_snapshot("tx_failed_90x24", &out);
+    }
+
+    fn sample_stats() -> SessionStats {
+        SessionStats {
+            connections: 3,
+            server_connections: 12,
+            max_connections: 100,
+            active: Some(1),
+            idle_in_transaction: Some(0),
+            oldest_transaction_secs: Some(12),
+            size_bytes: 1_288_490_188,
+            cache_hit_percent: Some(99.2),
+            deadlocks: 0,
+            uptime_secs: 3 * 86400 + 4 * 3600,
+            sees_all_sessions: true,
+        }
+    }
+
+    fn with_stats(width: u16, height: u16, stats: SessionStats) -> App {
+        let mut a = connected_app(width, height);
+        let id = a.state.active_connection().map(|c| c.id).expect("conn");
+        a.state.connection_mut_for_tests(id).stats = Some(stats);
+        a
+    }
+
+    #[test]
+    fn a_wide_session_pane_has_identity_on_the_left_and_the_server_on_the_right() {
+        let a = with_stats(130, 24, sample_stats());
+        let out = render(&a, 130, 24);
+        for expected in [
+            "Database    app",
+            "User        alice",
+            "127.0.0.1:5432  PostgreSQL 16.2",
+            "Connections 3 here · 12 of 100 on server",
+            "Activity    1 active · 0 idle in transaction",
+            "Size        1.2 GB · cache hit 99.2%",
+            "Health      oldest tx 12s · up 3d 4h · deadlocks 0",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert_snapshot("session_wide_130x24", &out);
+    }
+
+    #[test]
+    fn a_narrow_session_pane_keeps_the_numbers_that_matter() {
+        let a = with_stats(90, 24, sample_stats());
+        let out = render(&a, 90, 24);
+        for expected in [
+            "app · alice",
+            "Conns 3 here · 12/100 on server",
+            "1.2 GB · cache hit 99.2%",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert_snapshot("session_compact_90x24", &out);
+    }
+
+    #[test]
+    fn the_session_pane_is_wider_than_the_context_pane() {
+        for width in [80u16, 90, 120, 160] {
+            let a = connected_app(width, 24);
+            let areas = layout::compute(Rect::new(0, 0, width, 24), &a.state, &a.config);
+            let (c, s) = (areas.context.expect("c"), areas.session.expect("s"));
+            assert!(s.width > c.width, "{width}: {c:?} {s:?}");
+            assert_eq!(c.width + s.width, width);
+        }
+    }
+
+    #[test]
+    fn a_crowded_server_and_a_role_without_rights_are_shown_plainly() {
+        let mut stats = sample_stats();
+        stats.server_connections = 90;
+        stats.sees_all_sessions = false;
+        stats.active = Some(0);
+        stats.oldest_transaction_secs = None;
+        let a = with_stats(130, 24, stats);
+        let out = render(&a, 130, 24);
+        assert!(out.contains("90 of 100 on server"), "{out}");
+        assert!(out.contains("needs the pg_read_all_stats role"), "{out}");
+        assert!(out.contains("oldest tx n/a"), "{out}");
+    }
+
+    #[test]
+    fn statistics_that_cannot_be_read_say_so() {
+        let mut a = connected_app(130, 24);
+        let id = a.state.active_connection().map(|c| c.id).expect("conn");
+        a.state.connection_mut_for_tests(id).stats_error = Some("permission denied".to_string());
+        let out = render(&a, 130, 24);
+        assert!(
+            out.contains("Statistics unavailable: permission denied"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn sizes_and_ages_read_naturally() {
+        assert_eq!(format_bytes(900), "900 B");
+        assert_eq!(format_bytes(1536), "1.5 kB");
+        assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.0 GB");
+        assert_eq!(format_age(7), "7s");
+        assert_eq!(format_age(300), "5m");
+        assert_eq!(format_age(3 * 3600 + 20 * 60), "3h 20m");
+        assert_eq!(format_age(2 * 86400 + 5 * 3600), "2d 5h");
     }
 
     #[test]
@@ -1546,7 +2268,7 @@ mod tests {
         let mut a = app(40, 10);
         type_text(&mut a, "select 1");
         let out = render(&a, 40, 10);
-        assert!(out.contains("select 1") && out.contains("Terminal too small"));
+        assert!(out.contains("SELECT 1") && out.contains("Terminal too small"));
     }
 
     #[test]
@@ -1558,7 +2280,7 @@ mod tests {
         let out = render(&a, 80, 24);
         assert!(out.contains("┌ ▶ Editor: Buffer 2 (2/2) ─"), "{out}");
         assert!(
-            out.lines().nth(7).is_some_and(|l| l.starts_with("│1 x")),
+            out.lines().nth(8).is_some_and(|l| l.starts_with("│1 x")),
             "{out}"
         );
     }
@@ -1688,7 +2410,7 @@ mod tests {
         let mut a = app(80, 24);
         type_text(&mut a, &format!("{}END", "x".repeat(150)));
         let out = render(&a, 80, 24);
-        let row = out.lines().nth(7).expect("first editor row");
+        let row = out.lines().nth(8).expect("first editor row");
         assert!(row.contains("END"), "{row}");
         assert!(row.starts_with("│1 "), "{row}");
         assert!(!row.contains(&"x".repeat(100)));
@@ -1712,7 +2434,7 @@ mod tests {
         }
         let out = render(&a, 80, 24);
         assert!(out.contains("41"), "last line number is visible");
-        assert!(!out.lines().nth(7).is_some_and(|l| l.starts_with("│ 1 ")));
+        assert!(!out.lines().nth(8).is_some_and(|l| l.starts_with("│ 1 ")));
     }
 
     // Keep the `Color` import used even if themes change.

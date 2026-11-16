@@ -1,11 +1,22 @@
-# Light theme. Colors are names (red, blue, ...) or #rrggbb values.
-focus = "blue"
-error = "red"
-null = "gray"
-dimmed = "gray"
-keyword = "blue"
-number = "magenta"
-string = "green"
-status_prod = "red"
-status_fg = "white"
-status_bg = "dark-gray"
+# Light theme, in the colors of the oxpecker: brown and tan for the body,
+# yellow, red, black and cream for the accents. Colors are names or #rrggbb.
+focus = "#7b4a21"          # brown
+error = "#b3261e"          # red
+null = "#9a8a78"
+dimmed = "#8a7560"
+keyword = "#9a6700"        # deep yellow, readable on light backgrounds
+number = "#b3261e"
+string = "#8b5a2b"
+status_prod = "#b3261e"
+status_fg = "#f5e6c8"      # cream
+status_bg = "#5a3a1e"      # dark brown
+header_fg = "#f5e6c8"
+header_bg = "#7b4a21"
+row_alt_bg = "#f6ecd6"     # cream banding
+ok = "#7a5c00"
+warn = "#c4620a"
+label = "#8b5a2b"
+value = "#1e1611"          # near black
+line_number = "#b09a80"
+cursor_line_bg = "#efe0c0"
+background = "#faf3e0"     # cream

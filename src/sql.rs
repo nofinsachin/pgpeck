@@ -469,6 +469,101 @@ pub fn statement_at(src: &str, offset: usize) -> Option<Statement> {
         .copied()
 }
 
+/// What running some SQL could do, found by reading it (R15). It does not
+/// parse SQL: a function call can still change data, and the server decides
+/// in the end. This catches the common mistakes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Assessment {
+    /// Some statement is not read-only.
+    pub writes: bool,
+    /// An `UPDATE` or `DELETE` has no `WHERE` clause.
+    pub no_where: bool,
+    /// A `DROP` or `TRUNCATE`.
+    pub destructive: bool,
+}
+
+/// Statements that only read, or only control the session or a transaction.
+const READ_ONLY: &[&str] = &[
+    "select",
+    "show",
+    "values",
+    "table",
+    "begin",
+    "start",
+    "commit",
+    "end",
+    "rollback",
+    "savepoint",
+    "release",
+    "set",
+    "reset",
+    "declare",
+    "fetch",
+    "move",
+    "close",
+    "listen",
+    "unlisten",
+    "abort",
+    "prepare",
+    "deallocate",
+    "discard",
+];
+
+const WRITE_WORDS: &[&str] = &["insert", "update", "delete", "merge", "into"];
+
+pub fn assess(src: &str) -> Assessment {
+    let mut result = Assessment::default();
+    for statement in statements(src) {
+        let text = statement.text(src);
+        let mut words: Vec<(String, usize)> = Vec::new();
+        let mut depth = 0usize;
+        let mut has_where = false;
+        let mut modifies_at_top = false;
+        let mut previous_was_close = false;
+        for token in lex(text) {
+            let piece = &text[token.start..token.end];
+            match token.kind {
+                TokenKind::Whitespace | TokenKind::Comment => continue,
+                TokenKind::Punct if piece == "(" => depth += 1,
+                TokenKind::Punct if piece == ")" => depth = depth.saturating_sub(1),
+                TokenKind::Keyword | TokenKind::Identifier => {
+                    let word = piece.to_ascii_lowercase();
+                    if depth == 0 && word == "where" {
+                        has_where = true;
+                    }
+                    // The `UPDATE` of `ON CONFLICT DO UPDATE` does not count.
+                    let first = words.is_empty();
+                    if depth == 0
+                        && matches!(word.as_str(), "update" | "delete")
+                        && (first || previous_was_close)
+                    {
+                        modifies_at_top = true;
+                    }
+                    words.push((word, depth));
+                }
+                _ => {}
+            }
+            previous_was_close = token.kind == TokenKind::Punct && piece == ")";
+        }
+        let Some((first, _)) = words.first() else {
+            continue;
+        };
+        let any = |list: &[&str]| words.iter().any(|(w, _)| list.contains(&w.as_str()));
+        let writes = match first.as_str() {
+            // `SELECT ... INTO` creates a table. A data-changing CTE writes.
+            "select" | "with" | "table" | "values" => any(WRITE_WORDS),
+            "explain" => {
+                any(&["analyze", "analyse"]) && any(&["insert", "update", "delete", "merge"])
+            }
+            word => !READ_ONLY.contains(&word),
+        };
+        result.writes |= writes;
+        result.destructive |= matches!(first.as_str(), "drop" | "truncate");
+        result.no_where |= modifies_at_top && !has_where && first != "explain";
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,5 +875,76 @@ mod tests {
                 "{offset}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod assessment_tests {
+    use super::*;
+
+    fn a(src: &str) -> (bool, bool, bool) {
+        let r = assess(src);
+        (r.writes, r.no_where, r.destructive)
+    }
+
+    #[test]
+    fn reads_and_transaction_control_are_harmless() {
+        for src in [
+            "select 1",
+            "SELECT * FROM t WHERE a = 1; show search_path",
+            "begin; commit; rollback",
+            "set search_path = x",
+            "explain select 1",
+            "explain analyze select 1",
+            "with x as (select 1) select * from x",
+            "-- update everything\nselect 1",
+            "select 'delete from t'",
+        ] {
+            assert_eq!(a(src), (false, false, false), "{src}");
+        }
+    }
+
+    #[test]
+    fn data_changes_are_writes() {
+        for src in [
+            "insert into t values (1)",
+            "update t set a = 1 where id = 2",
+            "delete from t where id = 1",
+            "create table t (a int)",
+            "alter table t add column b int",
+            "select * into copy from t",
+            "with d as (delete from t where a = 1 returning *) select * from d",
+            "explain analyze update t set a = 1 where id = 1",
+            "call do_things()",
+            "vacuum",
+        ] {
+            assert!(assess(src).writes, "{src}");
+        }
+    }
+
+    #[test]
+    fn update_and_delete_need_a_where() {
+        assert_eq!(a("update t set a = 1"), (true, true, false));
+        assert_eq!(a("delete from t"), (true, true, false));
+        assert_eq!(a("DELETE FROM t;"), (true, true, false));
+        assert_eq!(a("delete from t where a = 1"), (true, false, false));
+        assert_eq!(
+            a("update t set a = (select max(b) from u where u.id = 1)"),
+            (true, true, false),
+            "a WHERE inside a sub-select is not the statement's WHERE"
+        );
+        assert_eq!(a("with x as (select 1) delete from t"), (true, true, false));
+        assert_eq!(
+            a("insert into t values (1) on conflict (id) do update set a = 2"),
+            (true, false, false)
+        );
+        assert_eq!(a("select 1; delete from t"), (true, true, false));
+    }
+
+    #[test]
+    fn drop_and_truncate_are_destructive() {
+        assert_eq!(a("drop table t"), (true, false, true));
+        assert_eq!(a("TRUNCATE t"), (true, false, true));
+        assert_eq!(a("select 1; drop view v"), (true, false, true));
     }
 }

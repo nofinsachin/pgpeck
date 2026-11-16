@@ -22,6 +22,16 @@ const ROLES: &[&str] = &[
     "status_prod",
     "status_fg",
     "status_bg",
+    "header_fg",
+    "header_bg",
+    "row_alt_bg",
+    "ok",
+    "warn",
+    "label",
+    "value",
+    "background",
+    "line_number",
+    "cursor_line_bg",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +46,16 @@ pub struct Theme {
     pub status_prod: Color,
     pub status_fg: Color,
     pub status_bg: Color,
+    pub header_fg: Color,
+    pub header_bg: Color,
+    pub row_alt_bg: Color,
+    pub ok: Color,
+    pub warn: Color,
+    pub label: Color,
+    pub value: Color,
+    pub background: Color,
+    pub line_number: Color,
+    pub cursor_line_bg: Color,
 }
 
 impl Theme {
@@ -99,6 +119,16 @@ impl Theme {
             status_prod: get("status_prod", base.status_prod),
             status_fg: get("status_fg", base.status_fg),
             status_bg: get("status_bg", base.status_bg),
+            header_fg: get("header_fg", base.header_fg),
+            header_bg: get("header_bg", base.header_bg),
+            row_alt_bg: get("row_alt_bg", base.row_alt_bg),
+            ok: get("ok", base.ok),
+            warn: get("warn", base.warn),
+            label: get("label", base.label),
+            value: get("value", base.value),
+            background: get("background", base.background),
+            line_number: get("line_number", base.line_number),
+            cursor_line_bg: get("cursor_line_bg", base.cursor_line_bg),
         };
         (theme, diags)
     }
@@ -117,6 +147,16 @@ impl Theme {
             status_prod: Color::Reset,
             status_fg: Color::Reset,
             status_bg: Color::Reset,
+            header_fg: Color::Reset,
+            header_bg: Color::Reset,
+            row_alt_bg: Color::Reset,
+            ok: Color::Reset,
+            warn: Color::Reset,
+            label: Color::Reset,
+            value: Color::Reset,
+            background: Color::Reset,
+            line_number: Color::Reset,
+            cursor_line_bg: Color::Reset,
         }
     }
 }

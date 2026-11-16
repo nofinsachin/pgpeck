@@ -1,12 +1,23 @@
-# Dark theme. Colors are names (red, light-blue, ...) or #rrggbb values.
+# Dark theme: brown, yellow, red, cream and blue accents on a pitch-black
+# background. Colors are names or #rrggbb.
 # Focus, errors and NULL are never conveyed by color alone (R20.9).
-focus = "cyan"
-error = "light-red"
-null = "dark-gray"
-dimmed = "dark-gray"
-keyword = "light-blue"
-number = "yellow"
-string = "green"
-status_prod = "red"
-status_fg = "black"
-status_bg = "gray"
+focus = "#f2c230"          # yellow bill
+error = "#e5533d"          # red bill tip
+null = "#8c7b6b"
+dimmed = "#8c7b6b"
+keyword = "#f2c230"
+number = "#e5533d"
+string = "#1e50a2"         # blue
+status_prod = "#c8321f"
+status_fg = "#ffffff"
+status_bg = "#1e50a2"
+header_fg = "#ffffff"
+header_bg = "#1e50a2"      # blue bar
+row_alt_bg = "#2b2119"     # dark brown banding
+ok = "#ffffff"             # white
+warn = "#e8892b"           # between yellow and red
+label = "#1e50a2"
+value = "#ffffff"
+line_number = "#7a6650"
+cursor_line_bg = "#3a2c20" # brown
+background = "#000000"     # pitch dark

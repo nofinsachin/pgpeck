@@ -139,8 +139,8 @@ pub async fn connect(
         }
         SslMode::Prefer if !is_local(&profile.host) => {
             return Err(DbError::new(
-                "TLS is not supported yet, so a remote host is refused unless you set ssl_mode = \"disable\" \
-                 in the profile to accept an unencrypted connection",
+                "TLS is not supported yet, so a remote host is refused unless its SSL mode is `disable`. \
+                 Edit the connection (Ctrl+E in the connect window) and set SSL mode to disable",
             ));
         }
         SslMode::Disable | SslMode::Prefer => {}
@@ -243,12 +243,133 @@ impl ResultSet {
     }
 }
 
+/// What the server is doing, narrowed to the database this session is in.
+/// CPU and memory are not here: PostgreSQL cannot report them to a client.
+/// What it can report is the share of the shared resources this database
+/// uses, such as its connections out of the server's limit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionStats {
+    /// Client connections to this database, including this one.
+    pub connections: u64,
+    /// Client connections to the whole server, and its limit.
+    pub server_connections: u64,
+    pub max_connections: u64,
+    /// `None` when the role may not see other roles' sessions.
+    pub active: Option<u64>,
+    pub idle_in_transaction: Option<u64>,
+    /// Age in seconds of the oldest open transaction in this database.
+    pub oldest_transaction_secs: Option<u64>,
+    pub size_bytes: u64,
+    /// Share of block reads served from memory, since the statistics reset.
+    pub cache_hit_percent: Option<f64>,
+    pub deadlocks: u64,
+    pub uptime_secs: u64,
+    /// True when the role sees every session's state.
+    pub sees_all_sessions: bool,
+}
+
+const STATS_SQL: &str = "
+with me as (
+  select (select rolsuper from pg_roles where rolname = current_user)
+         or pg_has_role(current_user, 'pg_read_all_stats', 'USAGE') as all_sessions
+), a as (
+  select pid, state, xact_start
+  from pg_stat_activity
+  where datname = current_database() and backend_type = 'client backend'
+)
+select
+  (select count(*) from a),
+  (select count(*) from pg_stat_activity where backend_type = 'client backend'),
+  current_setting('max_connections'),
+  (select count(*) from a where state = 'active'),
+  (select count(*) from a where state like 'idle in transaction%'),
+  (select extract(epoch from now() - min(xact_start))::bigint from a
+     where xact_start is not null and pid <> pg_backend_pid()),
+  pg_database_size(current_database()),
+  (select round(100.0 * blks_hit / nullif(blks_hit + blks_read, 0), 1)
+     from pg_stat_database where datname = current_database()),
+  (select deadlocks from pg_stat_database where datname = current_database()),
+  extract(epoch from now() - pg_postmaster_start_time())::bigint,
+  (select all_sessions from me)
+";
+
+/// Reads `SessionStats`. Call it only when the session is idle: it runs on the
+/// user's own connection and must not start or break a transaction.
+pub async fn stats(session: &Session) -> Result<SessionStats, DbError> {
+    let messages = session
+        .client
+        .simple_query(STATS_SQL)
+        .await
+        .map_err(|e| DbError::from(&e))?;
+    let row = messages
+        .into_iter()
+        .find_map(|m| match m {
+            SimpleQueryMessage::Row(r) => Some(r),
+            _ => None,
+        })
+        .ok_or_else(|| DbError::new("the server returned no statistics"))?;
+    let int = |i: usize| row.get(i).and_then(|v| v.parse::<u64>().ok());
+    Ok(SessionStats {
+        connections: int(0).unwrap_or(0),
+        server_connections: int(1).unwrap_or(0),
+        max_connections: int(2).unwrap_or(0),
+        active: int(3),
+        idle_in_transaction: int(4),
+        oldest_transaction_secs: int(5),
+        size_bytes: int(6).unwrap_or(0),
+        cache_hit_percent: row.get(7).and_then(|v| v.parse::<f64>().ok()),
+        deadlocks: int(8).unwrap_or(0),
+        uptime_secs: int(9).unwrap_or(0),
+        sees_all_sessions: row.get(10) == Some("t"),
+    })
+}
+
+/// Where the session is in a transaction (R16.1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TxState {
+    /// No transaction is open.
+    #[default]
+    Idle,
+    /// `BEGIN` was run and the transaction is still open.
+    Open,
+    /// An error aborted the transaction. Only a rollback gets out of it.
+    Failed,
+}
+
+/// Asks the server which transaction state the session is in. The driver does
+/// not report it, so this compares two clocks: `now()` is fixed when the
+/// transaction starts, `statement_timestamp()` when this statement starts.
+/// They are equal only when the statement began the transaction itself.
+/// An aborted transaction refuses the question with SQLSTATE 25P02.
+pub async fn transaction_state(session: &Session) -> TxState {
+    match session
+        .client
+        .simple_query("select now() <> statement_timestamp()")
+        .await
+    {
+        Ok(messages) => {
+            let open = messages
+                .iter()
+                .any(|m| matches!(m, SimpleQueryMessage::Row(r) if r.get(0) == Some("t")));
+            if open {
+                TxState::Open
+            } else {
+                TxState::Idle
+            }
+        }
+        Err(e) if e.code().is_some_and(|c| c.code() == "25P02") => TxState::Failed,
+        Err(_) => TxState::Idle,
+    }
+}
+
 /// Everything a run produced. Statements before an error still have results.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryOutput {
     pub sets: Vec<ResultSet>,
     pub error: Option<DbError>,
     pub elapsed: Duration,
+    /// The transaction state after the run.
+    pub tx: TxState,
 }
 
 /// Runs one or more statements. Memory stays bounded: only `row_limit` rows
@@ -307,10 +428,12 @@ pub async fn run(session: &Session, sql_text: &str, row_limit: usize) -> QueryOu
             }
         }
     }
+    let elapsed = started.elapsed();
     QueryOutput {
         sets,
         error,
-        elapsed: started.elapsed(),
+        elapsed,
+        tx: transaction_state(session).await,
     }
 }
 
@@ -458,10 +581,11 @@ mod tests {
 
             let mut remote = Profile::new("x");
             remote.host = "db.example.com".to_string();
+            remote.ssl_mode = SslMode::Prefer;
             let e = connect(&remote, "u", None, |_| {})
                 .await
                 .expect_err("refused");
-            assert!(e.message.contains("ssl_mode = \"disable\""));
+            assert!(e.message.contains("SSL mode to disable"));
         });
     }
 }

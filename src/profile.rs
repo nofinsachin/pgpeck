@@ -21,9 +21,10 @@ pub const DEFAULT_PORT: u16 = 5432;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SslMode {
+    /// The default while TLS is not supported yet.
+    #[default]
     Disable,
     /// libpq's default: use TLS when the server offers it.
-    #[default]
     Prefer,
     Require,
     VerifyCa,
@@ -99,6 +100,16 @@ impl Profile {
     }
 
     /// What the UI calls this profile.
+    /// Like `display_name`, but a connection typed by hand or pasted as a URI
+    /// (named `(manual)` or `(uri)`) is shown by its host.
+    pub fn shown_name(&self) -> &str {
+        if self.display_name().starts_with('(') {
+            &self.host
+        } else {
+            self.display_name()
+        }
+    }
+
     pub fn display_name(&self) -> &str {
         self.label
             .as_deref()
@@ -598,7 +609,7 @@ mod tests {
         let p = Profile::new("x");
         assert_eq!(
             (p.host.as_str(), p.port, p.ssl_mode),
-            ("localhost", 5432, SslMode::Prefer)
+            ("localhost", 5432, SslMode::Disable)
         );
         assert!(!p.production);
         assert_eq!(p.display_name(), "x");
@@ -665,7 +676,7 @@ mod tests {
         let p = profiles.get("dev").expect("dev");
         assert_eq!(
             (p.port, p.ssl_mode, p.production),
-            (5432, SslMode::Prefer, false)
+            (5432, SslMode::Disable, false)
         );
     }
 
