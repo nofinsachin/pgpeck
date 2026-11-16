@@ -366,6 +366,109 @@ fn dollar(src: &str, i: usize) -> Option<(usize, TokenKind)> {
     Some((end, TokenKind::DollarString))
 }
 
+/// One statement in a script, as byte offsets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Statement {
+    /// First character, which may be a comment that belongs to the statement.
+    pub start: usize,
+    /// End of the last token, before any terminating `;`.
+    pub end: usize,
+    /// End including the terminating `;`, or `end` when there is none.
+    pub terminated_end: usize,
+}
+
+impl Statement {
+    pub fn text(self, src: &str) -> &str {
+        &src[self.start..self.end]
+    }
+}
+
+/// Splits a script into statements (R7.1, R7.2). A `;` ends a statement unless
+/// it sits in a string, quoted name, comment or dollar-quoted body, or in the
+/// body of a `CREATE FUNCTION ... BEGIN ATOMIC ... END`. Segments that hold
+/// only comments are not statements.
+pub fn statements(src: &str) -> Vec<Statement> {
+    let mut found = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut end = 0;
+    let mut has_code = false;
+    let mut is_create = false;
+    let mut atomic_depth = 0usize;
+    let mut previous_word = String::new();
+
+    for token in lex(src) {
+        match token.kind {
+            TokenKind::Whitespace => continue,
+            TokenKind::Punct if &src[token.start..token.end] == ";" && atomic_depth == 0 => {
+                if let (Some(first), true) = (start, has_code) {
+                    found.push(Statement {
+                        start: first,
+                        end,
+                        terminated_end: token.end,
+                    });
+                }
+                (start, has_code, is_create, previous_word) = (None, false, false, String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if start.is_none() {
+            start = Some(token.start);
+        }
+        end = token.end;
+        if token.kind == TokenKind::Comment {
+            continue;
+        }
+        if !has_code {
+            is_create = src[token.start..token.end].eq_ignore_ascii_case("create");
+        }
+        has_code = true;
+        if matches!(token.kind, TokenKind::Keyword | TokenKind::Identifier) {
+            let word = src[token.start..token.end].to_ascii_lowercase();
+            if is_create && atomic_depth == 0 && previous_word == "begin" && word == "atomic" {
+                atomic_depth = 1;
+            } else if atomic_depth > 0 {
+                match word.as_str() {
+                    "case" => atomic_depth += 1,
+                    "end" => atomic_depth -= 1,
+                    _ => {}
+                }
+            }
+            previous_word = word;
+        } else {
+            previous_word.clear();
+        }
+    }
+    if let (Some(first), true) = (start, has_code) {
+        found.push(Statement {
+            start: first,
+            end,
+            terminated_end: end,
+        });
+    }
+    found
+}
+
+/// The statement the cursor is in (R7.3). Between statements it is the one
+/// before, or the one after when there is none before (R7.4).
+pub fn statement_at(src: &str, offset: usize) -> Option<Statement> {
+    let all = statements(src);
+    // Last one wins, so a cursor right after `;` and before the next word
+    // belongs to the next statement.
+    if let Some(inside) = all
+        .iter()
+        .rev()
+        .find(|s| s.start <= offset && offset <= s.terminated_end)
+    {
+        return Some(*inside);
+    }
+    all.iter()
+        .rev()
+        .find(|s| s.terminated_end < offset)
+        .or_else(|| all.iter().find(|s| s.start > offset))
+        .copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,5 +652,133 @@ mod tests {
             lexed("e = 1"),
             vec![(Identifier, "e"), (Operator, "="), (Number, "1")]
         );
+    }
+
+    // statements
+
+    fn texts(src: &str) -> Vec<&str> {
+        statements(src).into_iter().map(|s| s.text(src)).collect()
+    }
+
+    #[test]
+    fn splits_on_semicolons_and_trims() {
+        assert_eq!(
+            texts("select 1; select 2;\n\nselect 3"),
+            ["select 1", "select 2", "select 3"]
+        );
+        assert_eq!(texts("  select 1  ;  "), ["select 1"]);
+        assert!(texts("").is_empty() && texts(" \n ; ;").is_empty());
+    }
+
+    #[test]
+    fn semicolons_inside_strings_comments_and_dollar_bodies_do_not_split() {
+        let src = "select 'a;b'; select \"x;y\"; -- c;d\nselect 1; /* ; */ select $$ ; $$; select $f$ a; $f$";
+        assert_eq!(
+            texts(src),
+            [
+                "select 'a;b'",
+                "select \"x;y\"",
+                "-- c;d\nselect 1",
+                "/* ; */ select $$ ; $$",
+                "select $f$ a; $f$"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_function_with_a_dollar_quoted_body_is_one_statement() {
+        let src = "create function f() returns int language plpgsql as $$ begin return 1; end; $$; select f();";
+        let all = texts(src);
+        assert_eq!(all.len(), 2);
+        assert!(all[0].starts_with("create function") && all[0].ends_with("$$"));
+        assert_eq!(all[1], "select f()");
+    }
+
+    #[test]
+    fn a_begin_atomic_body_is_one_statement() {
+        let src = "create function f(a int) returns int language sql begin atomic select case when a > 0 then 1 else 2 end; end; select 2;";
+        let all = texts(src);
+        assert_eq!(all.len(), 2, "{all:?}");
+        assert!(all[0].ends_with("end"), "{}", all[0]);
+        assert_eq!(all[1], "select 2");
+    }
+
+    #[test]
+    fn plain_begin_and_end_are_ordinary_statements() {
+        assert_eq!(
+            texts("begin; select 1; commit;"),
+            ["begin", "select 1", "commit"]
+        );
+        assert_eq!(
+            texts("begin atomic; select 1;"),
+            ["begin atomic", "select 1"],
+            "only inside CREATE"
+        );
+    }
+
+    #[test]
+    fn comment_only_segments_are_not_statements() {
+        assert!(texts("-- nothing\n/* here */").is_empty());
+        assert_eq!(texts("-- note\nselect 1;"), ["-- note\nselect 1"]);
+        assert_eq!(texts("-- only\n;select 1"), ["select 1"]);
+    }
+
+    #[test]
+    fn terminated_end_includes_the_semicolon() {
+        let all = statements("select 1; select 2");
+        assert_eq!((all[0].end, all[0].terminated_end), (8, 9));
+        assert_eq!((all[1].end, all[1].terminated_end), (18, 18));
+    }
+
+    fn at(src: &str, offset: usize) -> Option<&str> {
+        statement_at(src, offset).map(|s| s.text(src))
+    }
+
+    #[test]
+    fn the_statement_under_the_cursor() {
+        let src = "select 1;\nselect 2;\nselect 3";
+        assert_eq!(at(src, 0), Some("select 1"));
+        assert_eq!(at(src, 4), Some("select 1"));
+        assert_eq!(at(src, 9), Some("select 1"), "right after the semicolon");
+        assert_eq!(at(src, 12), Some("select 2"));
+        assert_eq!(at(src, src.len()), Some("select 3"));
+    }
+
+    #[test]
+    fn between_statements_the_previous_one_wins() {
+        let src = "select 1;\n\n\nselect 2;";
+        assert_eq!(at(src, 10), Some("select 1"));
+        assert_eq!(at(src, 11), Some("select 1"));
+        assert_eq!(at(src, 12), Some("select 2"));
+    }
+
+    #[test]
+    fn before_the_first_statement_the_next_one_wins() {
+        let src = "\n\n  select 1;";
+        assert_eq!(at(src, 0), Some("select 1"));
+        assert_eq!(at(src, 1), Some("select 1"));
+    }
+
+    #[test]
+    fn touching_statements_prefer_the_next() {
+        assert_eq!(at("select 1;select 2", 9), Some("select 2"));
+    }
+
+    #[test]
+    fn no_statements_means_none() {
+        assert_eq!(at("", 0), None);
+        assert_eq!(at("-- hi", 2), None);
+    }
+
+    #[test]
+    fn a_multi_line_statement_is_found_from_any_line() {
+        let src = "select a,\n  b\nfrom t\nwhere x = 1;\nselect 2";
+        for offset in [0, 10, 16, 25] {
+            assert_eq!(
+                at(src, offset),
+                Some("select a,\n  b\nfrom t\nwhere x = 1"),
+                "{offset}"
+            );
+        }
     }
 }

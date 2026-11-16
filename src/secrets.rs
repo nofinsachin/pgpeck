@@ -9,9 +9,6 @@
 //! reliably needs `unsafe` or a new dependency, and the password is also held
 //! by the database driver.
 
-// Used by the connection layer, which lands in the next change. Remove this then.
-#![allow(dead_code)]
-
 use std::fmt;
 use std::path::{Path, PathBuf};
 

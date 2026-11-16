@@ -98,6 +98,50 @@ pub fn editor_area(pane: Rect, line_count: usize) -> EditorArea {
     }
 }
 
+/// Where the parts of the results pane go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResultsBody {
+    pub summary: Rect,
+    pub tabs: Option<Rect>,
+    pub header: Rect,
+    pub rows: Rect,
+}
+
+/// Splits the inside of the results pane: a summary line, an optional tab
+/// line, the column header, then the rows.
+pub fn results_body(pane: Rect, with_tabs: bool) -> ResultsBody {
+    let inner = pane.inner(Margin::new(1, 1));
+    let row = |offset: u16| Rect {
+        y: inner.y.saturating_add(offset).min(inner.bottom()),
+        height: u16::from(offset < inner.height),
+        ..inner
+    };
+    let tab_height = u16::from(with_tabs);
+    let rows_top = 2 + tab_height;
+    ResultsBody {
+        summary: row(0),
+        tabs: with_tabs.then(|| row(1)),
+        header: row(1 + tab_height),
+        rows: Rect {
+            y: inner.y.saturating_add(rows_top).min(inner.bottom()),
+            height: inner.height.saturating_sub(rows_top),
+            ..inner
+        },
+    }
+}
+
+/// A box of `width` x `height` centered in `area`, shrunk to fit.
+pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
+
 /// The help popup, centered in `area`.
 pub fn help_popup(area: Rect, content_lines: usize) -> Rect {
     let width = 74.min(area.width);

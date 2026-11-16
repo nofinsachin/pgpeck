@@ -11,6 +11,22 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # Throwaway credentials for the disposable service container below.
+      OXPECKER_TEST_DATABASE_URL: postgres://oxtest:s3cr3t-Pw-7731@127.0.0.1:5432/oxpecker
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oxtest
+          POSTGRES_PASSWORD: s3cr3t-Pw-7731
+          POSTGRES_DB: oxpecker
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oxtest -d oxpecker"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -20,11 +36,3 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-
-  # Integration tests that need PostgreSQL. Test files are named with a `pg_` prefix.
-  # Added once the first `pg_` test exists:
-  #   services:
-  #     postgres:
-  #       image: postgres:16
-  #       env: { POSTGRES_PASSWORD: postgres }
-  #       ports: ["5432:5432"]

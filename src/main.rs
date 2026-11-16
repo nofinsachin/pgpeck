@@ -1,29 +1,14 @@
-mod app;
-mod complete;
-mod config;
-mod diag;
-mod editor;
-mod events;
-mod keymap;
-mod layout;
-mod logging;
-mod paths;
-mod profile;
-mod secrets;
-mod sql;
-mod terminal;
-mod theme;
-mod ui;
-
 use std::path::Path;
 use std::process::ExitCode;
 
-use crate::app::App;
-use crate::config::Config;
-use crate::diag::Diagnostic;
-use crate::keymap::Keymap;
-use crate::profile::Profiles;
-use crate::theme::Theme;
+use oxpecker::app::App;
+use oxpecker::config::Config;
+use oxpecker::diag::Diagnostic;
+use oxpecker::keymap::Keymap;
+use oxpecker::profile::Profiles;
+use oxpecker::runtime::Runtime;
+use oxpecker::theme::Theme;
+use oxpecker::{events, logging, terminal, ui};
 
 const HELP: &str = "\
 oxpecker: a terminal client for PostgreSQL
@@ -63,7 +48,7 @@ fn read_optional(path: &Path, problems: &mut Vec<Diagnostic>) -> Option<String> 
 
 fn load_settings() -> Settings {
     let mut problems = Vec::new();
-    let dir = paths::config_dir();
+    let dir = oxpecker::paths::config_dir();
 
     let config = match dir
         .as_ref()
@@ -89,12 +74,12 @@ fn load_settings() -> Settings {
         None => Keymap::default_keymap(),
     };
 
-    let profiles = match dir.as_ref().map(|d| d.join(profile::FILE)) {
+    let profiles = match dir.as_ref().map(|d| d.join(oxpecker::profile::FILE)) {
         Some(path) => match read_optional(&path, &mut problems) {
             Some(src) => {
                 let (profiles, diags) = Profiles::parse(&src);
                 problems.extend(diags);
-                problems.extend(profile::permission_problem(&path));
+                problems.extend(oxpecker::profile::permission_problem(&path));
                 profiles
             }
             None => Profiles::default(),
@@ -134,7 +119,7 @@ fn load_settings() -> Settings {
 
 fn check_config() -> ExitCode {
     let settings = load_settings();
-    match paths::config_dir() {
+    match oxpecker::paths::config_dir() {
         Some(dir) => println!("Configuration directory: {}", dir.display()),
         None => println!("Configuration directory: not found (HOME is not set). Using defaults"),
     }
@@ -156,14 +141,23 @@ async fn run(settings: Settings) -> std::io::Result<()> {
         config,
         keymap,
         theme,
-        profiles: _profiles,
+        profiles,
         problems,
     } = settings;
 
     for problem in &problems {
         tracing::warn!(%problem, "configuration problem");
     }
+    let profiles_path = oxpecker::paths::config_dir().map(|d| d.join(oxpecker::profile::FILE));
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let runtime = Runtime::new(
+        tx.clone(),
+        config.connections.password_sources.clone(),
+        config.results.row_limit,
+        profiles_path,
+    );
     let mut app = App::new(config, keymap);
+    app.state.profiles = profiles;
     if !problems.is_empty() {
         app.state.notice = Some(format!(
             "{} configuration problem(s). Run oxpecker --check-config",
@@ -172,7 +166,8 @@ async fn run(settings: Settings) -> std::io::Result<()> {
     }
 
     let mut terminal = terminal::enter()?;
-    let result = event_loop(&mut terminal, &mut app, &theme).await;
+    events::spawn_input(tx.clone());
+    let result = event_loop(&mut terminal, &mut app, &theme, rx, &runtime, tx).await;
     terminal::leave();
     result
 }
@@ -181,20 +176,35 @@ async fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
     theme: &Theme,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<events::Event>,
+    runtime: &Runtime,
+    tx: tokio::sync::mpsc::UnboundedSender<events::Event>,
 ) -> std::io::Result<()> {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    events::spawn_input(tx);
-
     let size = terminal.size()?;
-    app.update(events::Event::Resize(size.width, size.height));
+    for command in app.update(events::Event::Resize(size.width, size.height)) {
+        runtime.execute(command);
+    }
+
+    // While a statement runs, redraw a few times a second so its elapsed
+    // time counts up.
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     while !app.state.quit {
         terminal.draw(|frame| ui::draw(frame, app, theme))?;
-        match rx.recv().await {
-            Some(event) => app.update(event),
-            None => break, // input thread stopped, and it has logged why
+        let event = tokio::select! {
+            event = rx.recv() => match event {
+                Some(event) => event,
+                None => break, // input thread stopped, and it has logged why
+            },
+            _ = ticker.tick(), if app.state.running.is_some() => events::Event::Tick,
+        };
+        for command in app.update(event) {
+            runtime.execute(command);
         }
     }
+    // Close connections cleanly. Nothing else is waiting on them.
+    drop(tx);
     Ok(())
 }
 
