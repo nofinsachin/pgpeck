@@ -8,6 +8,7 @@ use std::fmt;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::diag::{line_containing, line_of_offset, Diagnostic};
+use crate::editor::{EditCmd, Motion};
 
 const DEFAULT_KEYMAP: &str = include_str!("../config/keymap.default.toml");
 
@@ -27,6 +28,11 @@ pub enum Action {
     ToggleContext,
     ToggleResults,
     HelpToggle,
+    HelpScrollUp,
+    HelpScrollDown,
+    HelpPageUp,
+    HelpPageDown,
+    Edit(EditCmd),
 }
 
 const ACTIONS: &[(&str, Action)] = &[
@@ -39,6 +45,114 @@ const ACTIONS: &[(&str, Action)] = &[
     ("view.toggle_context", Action::ToggleContext),
     ("view.toggle_results", Action::ToggleResults),
     ("help.toggle", Action::HelpToggle),
+    ("help.scroll_up", Action::HelpScrollUp),
+    ("help.scroll_down", Action::HelpScrollDown),
+    ("help.page_up", Action::HelpPageUp),
+    ("help.page_down", Action::HelpPageDown),
+    (
+        "editor.move_left",
+        Action::Edit(EditCmd::Move(Motion::Left)),
+    ),
+    (
+        "editor.move_right",
+        Action::Edit(EditCmd::Move(Motion::Right)),
+    ),
+    ("editor.move_up", Action::Edit(EditCmd::Move(Motion::Up))),
+    (
+        "editor.move_down",
+        Action::Edit(EditCmd::Move(Motion::Down)),
+    ),
+    (
+        "editor.move_line_start",
+        Action::Edit(EditCmd::Move(Motion::LineStart)),
+    ),
+    (
+        "editor.move_line_end",
+        Action::Edit(EditCmd::Move(Motion::LineEnd)),
+    ),
+    (
+        "editor.move_word_left",
+        Action::Edit(EditCmd::Move(Motion::WordLeft)),
+    ),
+    (
+        "editor.move_word_right",
+        Action::Edit(EditCmd::Move(Motion::WordRight)),
+    ),
+    (
+        "editor.move_page_up",
+        Action::Edit(EditCmd::Move(Motion::PageUp)),
+    ),
+    (
+        "editor.move_page_down",
+        Action::Edit(EditCmd::Move(Motion::PageDown)),
+    ),
+    (
+        "editor.move_buffer_start",
+        Action::Edit(EditCmd::Move(Motion::BufferStart)),
+    ),
+    (
+        "editor.move_buffer_end",
+        Action::Edit(EditCmd::Move(Motion::BufferEnd)),
+    ),
+    (
+        "editor.select_left",
+        Action::Edit(EditCmd::Select(Motion::Left)),
+    ),
+    (
+        "editor.select_right",
+        Action::Edit(EditCmd::Select(Motion::Right)),
+    ),
+    (
+        "editor.select_up",
+        Action::Edit(EditCmd::Select(Motion::Up)),
+    ),
+    (
+        "editor.select_down",
+        Action::Edit(EditCmd::Select(Motion::Down)),
+    ),
+    (
+        "editor.select_line_start",
+        Action::Edit(EditCmd::Select(Motion::LineStart)),
+    ),
+    (
+        "editor.select_line_end",
+        Action::Edit(EditCmd::Select(Motion::LineEnd)),
+    ),
+    (
+        "editor.select_word_left",
+        Action::Edit(EditCmd::Select(Motion::WordLeft)),
+    ),
+    (
+        "editor.select_word_right",
+        Action::Edit(EditCmd::Select(Motion::WordRight)),
+    ),
+    (
+        "editor.select_page_up",
+        Action::Edit(EditCmd::Select(Motion::PageUp)),
+    ),
+    (
+        "editor.select_page_down",
+        Action::Edit(EditCmd::Select(Motion::PageDown)),
+    ),
+    (
+        "editor.select_buffer_start",
+        Action::Edit(EditCmd::Select(Motion::BufferStart)),
+    ),
+    (
+        "editor.select_buffer_end",
+        Action::Edit(EditCmd::Select(Motion::BufferEnd)),
+    ),
+    ("editor.select_all", Action::Edit(EditCmd::SelectAll)),
+    ("editor.backspace", Action::Edit(EditCmd::Backspace)),
+    ("editor.delete", Action::Edit(EditCmd::Delete)),
+    ("editor.newline", Action::Edit(EditCmd::Newline)),
+    ("editor.indent", Action::Edit(EditCmd::Indent)),
+    ("editor.outdent", Action::Edit(EditCmd::Outdent)),
+    ("editor.undo", Action::Edit(EditCmd::Undo)),
+    ("editor.redo", Action::Edit(EditCmd::Redo)),
+    ("editor.cut", Action::Edit(EditCmd::Cut)),
+    ("editor.copy", Action::Edit(EditCmd::Copy)),
+    ("editor.paste", Action::Edit(EditCmd::Paste)),
 ];
 
 impl Action {
@@ -66,6 +180,11 @@ impl Action {
             Action::ToggleContext => "toggle context strip",
             Action::ToggleResults => "toggle results",
             Action::HelpToggle => "help",
+            Action::HelpScrollUp => "scroll up",
+            Action::HelpScrollDown => "scroll down",
+            Action::HelpPageUp => "page up",
+            Action::HelpPageDown => "page down",
+            Action::Edit(cmd) => cmd.description(),
         }
     }
 }

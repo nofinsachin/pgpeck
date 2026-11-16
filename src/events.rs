@@ -12,6 +12,8 @@ use tokio::sync::mpsc::UnboundedSender;
 pub enum Event {
     Key(KeyEvent),
     Resize(u16, u16),
+    /// Text pasted through bracketed paste. It is data, never keystrokes.
+    Paste(String),
 }
 
 /// Starts the input thread. It stops when the receiver is dropped or the
@@ -37,6 +39,7 @@ pub fn spawn_input(tx: UnboundedSender<Event>) {
                 tx.send(Event::Key(key))
             }
             Ok(TermEvent::Resize(w, h)) => tx.send(Event::Resize(w, h)),
+            Ok(TermEvent::Paste(text)) => tx.send(Event::Paste(text)),
             Ok(_) => Ok(()),
             Err(e) => {
                 tracing::error!(error = %e, "terminal read failed");

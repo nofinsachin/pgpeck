@@ -14,6 +14,19 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorConfig {
     pub tab_indent: bool,
+    pub indent_width: usize,
+    pub auto_pair: bool,
+    pub auto_indent: bool,
+}
+
+impl EditorConfig {
+    pub fn options(&self) -> crate::editor::Options {
+        crate::editor::Options {
+            indent_width: self.indent_width,
+            auto_pair: self.auto_pair,
+            auto_indent: self.auto_indent,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +39,12 @@ pub struct UiConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            editor: EditorConfig { tab_indent: true },
+            editor: EditorConfig {
+                tab_indent: true,
+                indent_width: 4,
+                auto_pair: true,
+                auto_indent: true,
+            },
             ui: UiConfig {
                 theme: "dark".to_string(),
                 show_hint_bar: true,
@@ -38,7 +56,10 @@ impl Default for Config {
 
 /// Known sections and their options. Anything else is reported.
 const SCHEMA: &[(&str, &[&str])] = &[
-    ("editor", &["tab_indent"]),
+    (
+        "editor",
+        &["tab_indent", "indent_width", "auto_pair", "auto_indent"],
+    ),
     ("ui", &["theme", "show_hint_bar", "show_context_strip"]),
 ];
 
@@ -102,6 +123,15 @@ impl Config {
         let want_bool = |v: &toml::Value| v.as_bool().ok_or("expected true or false");
         match (section, key) {
             ("editor", "tab_indent") => self.editor.tab_indent = want_bool(value)?,
+            ("editor", "auto_pair") => self.editor.auto_pair = want_bool(value)?,
+            ("editor", "auto_indent") => self.editor.auto_indent = want_bool(value)?,
+            ("editor", "indent_width") => {
+                self.editor.indent_width = value
+                    .as_integer()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| (1..=16).contains(n))
+                    .ok_or("expected a whole number from 1 to 16")?;
+            }
             ("ui", "show_hint_bar") => self.ui.show_hint_bar = want_bool(value)?,
             ("ui", "show_context_strip") => self.ui.show_context_strip = want_bool(value)?,
             ("ui", "theme") => {
@@ -152,6 +182,18 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].line, Some(2));
         assert!(diags[0].message.contains("editor.tab_indent"));
+    }
+
+    #[test]
+    fn indent_width_is_range_checked() {
+        for bad in ["0", "17", "-1", "2.5", "\"4\""] {
+            let (config, diags) = Config::parse(&format!("[editor]\nindent_width = {bad}\n"));
+            assert_eq!(config.editor.indent_width, 4, "{bad}");
+            assert_eq!(diags.len(), 1, "{bad}");
+        }
+        let (config, diags) = Config::parse("[editor]\nindent_width = 2\n");
+        assert!(diags.is_empty());
+        assert_eq!(config.editor.indent_width, 2);
     }
 
     #[test]

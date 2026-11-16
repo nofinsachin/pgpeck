@@ -16,7 +16,10 @@
 # Alt+digit binding.
 #
 # Actions: app.quit, focus.context, focus.editor, focus.results, focus.next,
-# focus.prev, view.toggle_context, view.toggle_results, help.toggle
+# focus.prev, view.toggle_context, view.toggle_results, help.toggle,
+# help.scroll_up, help.scroll_down, help.page_up, help.page_down, and the
+# editor.* actions used below. Text is typed into the editor by any printable
+# key that has no binding (Ctrl+C is unbound: copy is Alt+C or Ctrl+Insert).
 
 [global]
 "ctrl+q" = "app.quit"
@@ -35,6 +38,45 @@
 "f1" = "help.toggle"
 
 [editor]
+"left" = "editor.move_left"
+"right" = "editor.move_right"
+"up" = "editor.move_up"
+"down" = "editor.move_down"
+"home" = "editor.move_line_start"
+"end" = "editor.move_line_end"
+"ctrl+left" = "editor.move_word_left"
+"ctrl+right" = "editor.move_word_right"
+"pageup" = "editor.move_page_up"
+"pagedown" = "editor.move_page_down"
+"ctrl+home" = "editor.move_buffer_start"
+"ctrl+end" = "editor.move_buffer_end"
+"shift+left" = "editor.select_left"
+"shift+right" = "editor.select_right"
+"shift+up" = "editor.select_up"
+"shift+down" = "editor.select_down"
+"shift+home" = "editor.select_line_start"
+"shift+end" = "editor.select_line_end"
+"ctrl+shift+left" = "editor.select_word_left"
+"ctrl+shift+right" = "editor.select_word_right"
+"shift+pageup" = "editor.select_page_up"
+"shift+pagedown" = "editor.select_page_down"
+"ctrl+shift+home" = "editor.select_buffer_start"
+"ctrl+shift+end" = "editor.select_buffer_end"
+"ctrl+a" = "editor.select_all"
+"backspace" = "editor.backspace"
+"delete" = "editor.delete"
+"enter" = "editor.newline"
+# Tab only edits while `editor.tab_indent` is true. Otherwise it moves focus.
+"tab" = "editor.indent"
+"shift+tab" = "editor.outdent"
+"ctrl+z" = "editor.undo"
+"ctrl+y" = "editor.redo"
+"ctrl+x" = "editor.cut"
+"shift+delete" = "editor.cut"
+"alt+c" = "editor.copy"
+"ctrl+insert" = "editor.copy"
+"ctrl+v" = "editor.paste"
+"shift+insert" = "editor.paste"
 
 [context]
 "?" = "help.toggle"
@@ -43,6 +85,10 @@
 "?" = "help.toggle"
 
 [dialog]
+"up" = "help.scroll_up"
+"down" = "help.scroll_down"
+"pageup" = "help.page_up"
+"pagedown" = "help.page_down"
 "esc" = "help.toggle"
 "f1" = "help.toggle"
 "?" = "help.toggle"

@@ -1,10 +1,14 @@
 mod app;
 mod config;
 mod diag;
+mod editor;
 mod events;
 mod keymap;
+mod layout;
 mod logging;
 mod paths;
+mod sql;
+mod terminal;
 mod theme;
 mod ui;
 
@@ -146,10 +150,9 @@ async fn run(settings: Settings) -> std::io::Result<()> {
         ));
     }
 
-    // ratatui installs a panic hook that restores the terminal.
-    let mut terminal = ratatui::try_init()?;
+    let mut terminal = terminal::enter()?;
     let result = event_loop(&mut terminal, &mut app, &theme).await;
-    ratatui::restore();
+    terminal::leave();
     result
 }
 

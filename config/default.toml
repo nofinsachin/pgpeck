@@ -8,6 +8,13 @@
 # When false, Tab and Shift+Tab move focus between panes everywhere.
 # Alt+1/2/3 and F6 always move focus out of the editor.
 tab_indent = true
+# Spaces per indent step. Tab inserts spaces up to the next multiple of this
+# width, and pasted tab characters become this many spaces. Range 1 to 16.
+indent_width = 4
+# Insert the closing ( [ ' or " when you type the opening one.
+auto_pair = true
+# A new line starts with the indentation of the line above.
+auto_indent = true
 
 [ui]
 # Theme name. Built in: "dark", "light". A file named <theme>.toml in the
