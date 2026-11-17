@@ -11,6 +11,7 @@ pub mod complete;
 pub mod config;
 pub mod db;
 pub mod diag;
+pub mod diagram;
 pub mod editor;
 pub mod events;
 pub mod form;

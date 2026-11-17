@@ -142,11 +142,17 @@ The session strip and the status bar show an open or failed transaction.
 
 ## Relationships
 
-In the Find window, select a table or view and press `Alt+Z`. The window lists the foreign keys
-that leave the table ("References") and the ones that enter it ("Referenced by"), with the
-columns on both sides. `Enter` shows the table on the other end, so you can walk through the
-schema, and `Backspace` goes back. `S` selects sample rows of the selected table. The keys come
-from the schema read when you connect. They refresh after a statement that changes the schema.
+In the Find window, select a table or view and press `Alt+Z`. The table sits in the middle of a
+diagram. The tables that point at it are on the left, and the tables it points at are on the
+right. Lines join the boxes, with an arrow from the table that holds the foreign key to the table
+it refers to. Each box names the columns of the key, holder first, for example
+`(order_id) → (id)`. A line under the diagram spells out the selected key.
+
+`Up` and `Down` move the selection through the right side first, then the left. `Enter` makes the
+selected table the middle one, so you can walk through the schema, and `Backspace` goes back. `S`
+selects sample rows of the selected table. When a table has more neighbours than fit, the diagram
+scrolls and says how many are out of view. The keys come from the schema read when you connect.
+They refresh after a statement that changes the schema.
 
 ## History
 

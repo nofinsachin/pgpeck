@@ -9,6 +9,7 @@ use ratatui::Frame;
 use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
 use crate::catalog;
 use crate::db::{DbError, ResultSet, SessionStats, TxState};
+use crate::diagram;
 use crate::editor::{cell_width, display_col, Pos};
 use crate::history;
 use crate::keymap::{Action, KeyChord, Scope};
@@ -1475,65 +1476,106 @@ fn draw_relations(frame: &mut Frame, app: &App, theme: &Theme, view: &relations:
         Rect { height: 1, ..inner },
     );
 
-    let list = Rect {
+    let canvas_area = Rect {
         y: inner.y + 1,
-        height: inner.height.saturating_sub(2),
+        height: inner.height.saturating_sub(3),
         ..inner
     };
-    let width = usize::from(list.width);
     let links = App::relation_links(&app.state.connections, app.state.doc().connection, view);
-    let mut lines: Vec<Line> = Vec::new();
-    let mut selected_line = 0;
-    let heading = |lines: &mut Vec<Line>, text: &str, empty: &str, any: bool| {
-        lines.push(Line::styled(text.to_string(), label));
-        if !any {
-            lines.push(Line::styled(format!("  {empty}"), dim));
+    // Tables that point at this one on the left, the ones it points at on the
+    // right. Each box says which columns the key joins, holder first.
+    let node = |link: &relations::Link<'_>| {
+        let (other_schema, other_table) = link.other();
+        diagram::Node {
+            title: format!("{other_schema}.{other_table}"),
+            note: format!(
+                "({}) → ({})",
+                link.key.columns.join(", "),
+                link.key.ref_columns.join(", ")
+            ),
         }
     };
-    let outgoing: Vec<usize> = (0..links.len()).filter(|i| links[*i].outgoing).collect();
-    let incoming: Vec<usize> = (0..links.len()).filter(|i| !links[*i].outgoing).collect();
-    for (title, empty, group) in [
-        ("References (this table points to)", "none", &outgoing),
-        ("Referenced by (points to this table)", "none", &incoming),
-    ] {
-        heading(&mut lines, title, empty, !group.is_empty());
-        for &index in group {
-            let link = links[index];
-            let (mine, theirs) = link.columns();
-            let (other_schema, other_table) = link.other();
-            let selected = index == view.selected;
-            if selected {
-                selected_line = lines.len();
-            }
-            let arrow = if link.outgoing { "→" } else { "←" };
-            let text = format!(
-                "({}) {arrow} {other_schema}.{other_table} ({})",
-                mine.join(", "),
-                theirs.join(", ")
-            );
-            let name_width = link.key.name.chars().count();
-            let mut line = Line::from(vec![
-                Span::styled(if selected { "▶ " } else { "  " }, value),
-                Span::styled(
-                    fit(&text, width.saturating_sub(4 + name_width).max(8)),
-                    value,
-                ),
-                Span::raw("  "),
-                Span::styled(link.key.name.clone(), dim),
-            ]);
-            if selected {
-                line = line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD));
-            }
-            lines.push(line);
+    let right: Vec<diagram::Node> = links.iter().filter(|l| l.outgoing).map(node).collect();
+    let left: Vec<diagram::Node> = links.iter().filter(|l| !l.outgoing).map(node).collect();
+    let selected = (!links.is_empty()).then(|| {
+        if view.selected < right.len() {
+            (diagram::Side::Right, view.selected)
+        } else {
+            (diagram::Side::Left, view.selected - right.len())
         }
-    }
-    let top = (selected_line + 1).saturating_sub(usize::from(list.height));
-    let visible: Vec<Line> = lines
-        .into_iter()
-        .skip(top)
-        .take(usize::from(list.height))
+    });
+    let note = if links.is_empty() {
+        "no foreign keys"
+    } else {
+        ""
+    };
+    let canvas = diagram::render(
+        usize::from(canvas_area.width),
+        usize::from(canvas_area.height),
+        &format!("{schema}.{table}"),
+        note,
+        &left,
+        &right,
+        selected,
+    );
+    let style_of = |paint: diagram::Paint| match paint {
+        diagram::Paint::Blank | diagram::Paint::Box => value,
+        diagram::Paint::Line | diagram::Paint::Note => dim,
+        diagram::Paint::Selected => Style::new().fg(theme.focus).add_modifier(Modifier::BOLD),
+        diagram::Paint::Center => label,
+    };
+    let lines: Vec<Line> = canvas
+        .cells
+        .iter()
+        .map(|row| {
+            // Runs of one paint become one span.
+            let mut spans: Vec<Span> = Vec::new();
+            let mut run = String::new();
+            let mut current = diagram::Paint::Blank;
+            for (ch, paint) in row {
+                if *paint != current && !run.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut run), style_of(current)));
+                }
+                current = *paint;
+                run.push(*ch);
+            }
+            if !run.is_empty() {
+                spans.push(Span::styled(run, style_of(current)));
+            }
+            Line::from(spans)
+        })
         .collect();
-    frame.render_widget(Paragraph::new(visible), list);
+    frame.render_widget(Paragraph::new(lines), canvas_area);
+
+    // What the selected line is, in words.
+    if let Some(link) = links.get(view.selected) {
+        let (other_schema, other_table) = link.other();
+        let (holder, target) = if link.outgoing {
+            (
+                format!("{schema}.{table}"),
+                format!("{other_schema}.{other_table}"),
+            )
+        } else {
+            (
+                format!("{other_schema}.{other_table}"),
+                format!("{schema}.{table}"),
+            )
+        };
+        let text = format!(
+            "{}: {holder} ({}) → {target} ({})",
+            link.key.name,
+            link.key.columns.join(", "),
+            link.key.ref_columns.join(", ")
+        );
+        frame.render_widget(
+            Paragraph::new(Line::styled(fit(&text, usize::from(inner.width)), value)),
+            Rect {
+                y: inner.y + inner.height - 2,
+                height: 1,
+                ..inner
+            },
+        );
+    }
 
     let key = |a| {
         app.keymap
@@ -3215,15 +3257,27 @@ mod tests {
         let out = render(&a, 100, 30);
         for expected in [
             "Relationships: public.orders",
-            "References (this table points to)",
-            "▶ (customer_id) → sales.customers (id)",
-            "Referenced by (points to this table)",
-            "(id) ← public.items (order_id)",
+            "sales.customers",
+            "public.items",
+            "(customer_id) → (id)",
+            "(order_id) → (id)",
+            "orders_customer_fk: public.orders (customer_id) → sales.customers (id)",
             "sample rows",
+            "▶",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
+        // The tables that point at this one are on the left, the ones it
+        // points at on the right.
+        let col = |text: &str| {
+            out.lines()
+                .find_map(|l| l.find(text).map(|i| l[..i].chars().count()))
+                .expect(text)
+        };
+        assert!(col("public.items") < col("Relationships") + 40, "{out}");
+        assert!(col("public.items") < col("sales.customers"), "{out}");
         assert!(!out.contains("back"), "no way back from the first table");
+        assert_snapshot("relations_root_100x30", &out);
         key(&mut a, KeyCode::Down, KeyModifiers::NONE);
         key(&mut a, KeyCode::Enter, KeyModifiers::NONE);
         let out = render(&a, 100, 30);

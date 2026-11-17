@@ -4,16 +4,16 @@
 ┌ Results ─────────────────────────────────────────────────────┐              ████████████
 │    ┌───────────────────────────── Relationships: public.items ──────────────────────────────┐
 │    │public.orders › public.items                                                            │
-│    │References (this table points to)                                                       │
-│    │▶ (order_id) → public.orders (id)                                         items_order_fk│────┐
-│    │Referenced by (points to this table)                                                    │    │
-│    │  none                                                                                  │or  │
+│    │                                                                                        │
+│    │                                                                                        │────┐
+│    │                                                                                        │    │
+│    │                                                                                        │or  │
 │    │                                                                                        │    │
 │    │                                                                                        │────┘
 │    │                                                                                        │────┐
-│    │                                                                                        │    │
-│    │                                                                                        │    │
-│    │                                                                                        │    │
+│    │                              ┌ public.items ────────────┐       ┌ public.orders ──────┐│    │
+│    │                              │                          │──────▶│ (order_id) → (id)   ││    │
+│    │                              └──────────────────────────┘       └─────────────────────┘│    │
 │    │                                                                                        │    │
 │    │                                                                                        │    │
 │    │                                                                                        │    │
@@ -21,7 +21,7 @@
 └────│                                                                                        │    │
 ┌ ▶ E│                                                                                        │    │
 │1   │                                                                                        │    │
-│    │                                                                                        │    │
+│    │items_order_fk: public.items (order_id) → public.orders (id)                            │    │
 │    │Enter go to table  Backspace back  s sample rows  Esc close                             │    │
 │    └────────────────────────────────────────────────────────────────────────────────────────┘    │
 │                                                              ││                                  │
