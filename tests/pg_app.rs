@@ -210,7 +210,7 @@ async fn the_statement_under_the_cursor_runs_not_the_whole_buffer() {
     // only: the lines from its title down to the editor's title.
     let results: String = screen
         .lines()
-        .skip_while(|l| !l.contains("┌ Results"))
+        .skip_while(|l| !l.contains("Results ─"))
         .take_while(|l| !l.contains("Editor"))
         .collect::<Vec<_>>()
         .join("\n");

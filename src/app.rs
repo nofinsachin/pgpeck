@@ -1494,9 +1494,17 @@ impl App {
                         .unwrap_or_default();
                     self.notice(format!("The transaction failed.{key}"));
                 }
+                // Rows that came back are what you look at next, so the results
+                // take focus, without any pane-switching keys.
+                let has_rows =
+                    output.error.is_none() && output.sets.iter().any(|s| s.returns_rows());
+                let active_doc = self.state.doc().id == doc;
                 if let Some(d) = self.state.docs.iter_mut().find(|d| d.id == doc) {
                     d.results = Some(Results::new(output));
                     self.state.show_results = true;
+                }
+                if has_rows && active_doc {
+                    self.state.focus = Pane::Results;
                 }
                 if cancelled {
                     self.notice("Query cancelled");
