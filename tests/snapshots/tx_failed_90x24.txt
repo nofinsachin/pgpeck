@@ -1,14 +1,13 @@
-┌ Session ───────────────────────────────────────────────────────────────────────────────┐
-│Session: 127.0.0.1  Transaction: FAILED. Alt+Z rolls back  Database: 127.0.0.1:5432, ali│
-│Ctrl+R run  Esc commands  Ctrl+O connect                                                │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Results ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
-│                                                    ││Buffer     Buffer 1               │
-│                                                    ││Statement  none under the cursor  │
-│                                                    ││                                  │
+┌ Session ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│Session: 127.0.0.1  Transaction: FAILED. Alt+Z rolls││Buffer     Buffer 1               │
+└────────────────────────────────────────────────────┘│Statement  none under the cursor  │
+┌ Results ───────────────────────────────────────────┐│                                  │
 │                                                    │└──────────────────────────────────┘
 │                                                    │┌ Trends ──────────────────────────┐
 │                                                    ││Reading…                          │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
@@ -21,4 +20,5 @@
 │                                                    ││                                  │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
+Ctrl+R run  Esc commands  Ctrl+O connect
  (uri) │ app │ alice │ no TLS │ focus: Editor │ Ln 1, Col 1 │ TX FAILED (Alt+Z rolls back)

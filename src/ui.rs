@@ -265,33 +265,66 @@ fn draw_logo(frame: &mut Frame, theme: &Theme, area: Rect) {
 /// The session strip above the results: the connection's name, where it
 /// points, and anything that needs attention. The server numbers are in the
 /// trends pane.
+/// Cells kept for the key hints on the session line, and the least left for
+/// the session text.
+const HINT_ROOM: usize = 34;
+const MIN_SESSION_TEXT: usize = 20;
+
+/// `line` cut to `max` cells, with an ellipsis when something was removed.
+fn cut_line(line: Line<'static>, max: usize) -> Line<'static> {
+    let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    if total <= max {
+        return line;
+    }
+    let mut left = max.saturating_sub(1);
+    let mut spans = Vec::new();
+    for span in line.spans {
+        if left == 0 {
+            break;
+        }
+        let count = span.content.chars().count();
+        if count <= left {
+            left -= count;
+            spans.push(span);
+        } else {
+            let text: String = span.content.chars().take(left).collect();
+            spans.push(Span::styled(text, span.style));
+            left = 0;
+        }
+    }
+    spans.push(Span::raw("…"));
+    Line::from(spans)
+}
+
 fn draw_session(frame: &mut Frame, app: &App, theme: &Theme, area: Rect, hints_here: bool) {
     let dim = Style::new().fg(theme.dimmed);
     let block = pane_block(app, theme, Pane::Session);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    // The key hints take the second line, when the bottom hint bar is gone.
-    let inner = if hints_here && app.config.ui.show_hint_bar && inner.height >= 2 {
-        let hint_row = Rect {
-            y: inner.y + 1,
-            height: 1,
-            ..inner
-        };
-        draw_hint_bar(frame, app, theme, hint_row);
-        Rect { height: 1, ..inner }
-    } else {
-        inner
+    let mut line = match app.state.active_connection() {
+        None => Line::styled("Not connected", dim),
+        Some(conn) => {
+            let rollback_key = app
+                .keymap
+                .key_for(Action::TransactionRollback, &[Scope::Global], |_| true)
+                .map_or_else(|| "(unbound)".to_string(), key_label);
+            SessionView::new(theme, conn, &rollback_key).line()
+        }
     };
-    let Some(conn) = app.state.active_connection() else {
-        frame.render_widget(Paragraph::new(Line::styled("Not connected", dim)), inner);
-        return;
-    };
-    let rollback_key = app
-        .keymap
-        .key_for(Action::TransactionRollback, &[Scope::Global], |_| true)
-        .map_or_else(|| "(unbound)".to_string(), key_label);
-    let view = SessionView::new(theme, conn, &rollback_key);
-    frame.render_widget(Paragraph::new(view.line()), inner);
+    // The key hints follow on the same line, as many as fit. A long session
+    // line is cut short to leave them some room.
+    if hints_here && app.config.ui.show_hint_bar {
+        let width = usize::from(inner.width);
+        let session_max = width.saturating_sub(HINT_ROOM + 5).max(MIN_SESSION_TEXT);
+        line = cut_line(line, session_max);
+        let used: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        let hints = hint_spans(app, theme, width.saturating_sub(used + 5));
+        if !hints.is_empty() {
+            line.spans.push(Span::styled("  │  ", dim));
+            line.spans.extend(hints);
+        }
+    }
+    frame.render_widget(Paragraph::new(line), inner);
 }
 
 /// The trends pane: the largest tables of the connected database as bars,
@@ -1120,6 +1153,12 @@ fn is_selected(selection: Option<(Pos, Pos)>, line: usize, col: usize, line_len:
 // ---------------------------------------------------------------------------
 
 fn draw_hint_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let spans = hint_spans(app, theme, usize::from(area.width));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The key hints that fit in `width` cells, most useful first.
+fn hint_spans(app: &App, theme: &Theme, width: usize) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut used = 0usize;
     for action in app.hint_actions() {
@@ -1131,7 +1170,7 @@ fn draw_hint_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         let separator = if spans.is_empty() { 0 } else { 2 };
         let needed = separator + key.chars().count() + label.chars().count();
         // Drop hints that do not fit, instead of cutting one in half.
-        if used + needed > usize::from(area.width) {
+        if used + needed > width {
             break;
         }
         used += needed;
@@ -1141,7 +1180,7 @@ fn draw_hint_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         spans.push(Span::styled(key, Style::new().add_modifier(Modifier::BOLD)));
         spans.push(Span::styled(label, Style::new().fg(theme.dimmed)));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    spans
 }
 
 /// Black or white, whichever reads better on `bg`.
@@ -2320,6 +2359,20 @@ mod tests {
     }
 
     #[test]
+    fn on_a_wide_terminal_the_key_hints_share_the_session_line() {
+        let a = with_stats(160, 40, sample_stats());
+        let out = render(&a, 160, 40);
+        let line = out.lines().nth(1).expect("session line");
+        assert!(
+            line.contains("Session: ") && line.contains("Ctrl+R run"),
+            "{line}"
+        );
+        // No hint bar under the panes: the status bar is the last line.
+        let last = out.lines().rev().nth(1).expect("last line");
+        assert!(!last.contains("Ctrl+R run"), "{last}");
+    }
+
+    #[test]
     fn results_sit_above_a_short_editor_and_the_right_column_stacks_top_to_bottom() {
         for (width, height) in [(80u16, 24u16), (120, 30), (160, 40)] {
             let a = connected_app(width, height);
@@ -2330,11 +2383,11 @@ mod tests {
             assert_eq!(results.x, editor.x);
             assert_eq!(results.width, editor.width);
 
-            // The session strip runs across the top, above both columns.
+            // The session strip heads the left column, over the results.
             let (session, context) = (areas.session.expect("s"), areas.context.expect("c"));
             assert_eq!(session.bottom(), results.y, "{width}x{height}");
-            assert_eq!((session.x, session.width), (0, width));
-            assert_eq!(session.bottom(), context.y.min(session.bottom()));
+            assert_eq!(session.x, results.x);
+            assert_eq!(session.width, results.width);
             assert!(context.x >= results.right(), "right column is on the right");
             if let Some(trends) = areas.trends {
                 assert_eq!(context.bottom(), trends.y);
@@ -2348,8 +2401,8 @@ mod tests {
 
     #[test]
     fn trends_are_left_out_when_the_right_column_is_too_short() {
-        let a = connected_app(100, 19);
-        let areas = layout::compute(Rect::new(0, 0, 100, 19), &a.state, &a.config);
+        let a = connected_app(100, 18);
+        let areas = layout::compute(Rect::new(0, 0, 100, 18), &a.state, &a.config);
         assert!(areas.trends.is_none());
         assert!(areas.session.is_some() && areas.context.is_some());
         let tall = connected_app(100, 40);
@@ -2473,8 +2526,7 @@ mod tests {
         assert!(out.contains("▶ delete"), "{out}");
         assert!(out.contains("  desc") && out.contains("declare"));
         // The popup sits under the word and the hint bar shows its keys.
-        // The hints are the second line inside the session strip.
-        let hint = out.lines().nth(2).expect("hint line");
+        let hint = out.lines().rev().nth(1).expect("hint line");
         assert!(hint.contains("Enter accept suggestion"), "{hint}");
         assert_snapshot("completion_80x24", &out);
     }
@@ -2570,8 +2622,7 @@ mod tests {
     #[test]
     fn hint_bar_does_not_advertise_tab_while_editor_keeps_it() {
         let out = render(&app(80, 24), 80, 24);
-        // The hints are the second line inside the session strip.
-        let hint = out.lines().nth(2).expect("hint line");
+        let hint = out.lines().rev().nth(1).expect("hint line");
         assert!(!hint.contains("Tab"), "{hint}");
         // The editor hint is short: how to run and how to leave.
         assert!(
@@ -2818,8 +2869,8 @@ mod tests {
 
     #[test]
     fn a_short_terminal_does_not_draw_the_trends() {
-        let a = with_stats(130, 19, sample_stats());
-        assert!(!render(&a, 130, 19).contains("┌ Trends"));
+        let a = with_stats(130, 18, sample_stats());
+        assert!(!render(&a, 130, 18).contains("┌ Trends"));
     }
 
     #[test]

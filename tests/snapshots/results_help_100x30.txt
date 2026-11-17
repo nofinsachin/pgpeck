@@ -1,30 +1,30 @@
-┌ Session ─────────────────────────────────────────────────────────────────────────────────────────┐
-│Not connected                                                                                     │
-│C connect  R┌───────────────────────────────── Help ─────────────────────────────────┐            │
-└────────────│results keys                                                            │────────────┘
-┌ ▶ Results ─│  ?                 help                  help.toggle                   │
-│            │  Down              row down              results.scroll_down           │█▄
-│            │  End               last row              results.last_row              │▀██
-│            │  Home              first row             results.first_row             │███
-│            │  Left              columns left          results.scroll_left           │█▀
-│            │  PageDown          page down             results.page_down             │
-│            │  PageUp            page up               results.page_up               │
-│            │  Right             columns right         results.scroll_right          │────────────┐
-│            │  Up                row up                results.scroll_up             │            │
-│            │  [                 previous result       results.prev_tab              │a database. │
-│            │  ]                 next result           results.next_tab              │mmands.     │
-│            │  c                 connect               connection.open               │────────────┘
-│            │  e                 edit                  focus.editor                  │────────────┐
+┌ Session ─────────────────────────────────────────────────────┐                ▄▄▄▄▄▄▄
+│Not connected                                                 │             ▄██████████▄
+└────────────┌───────────────────────────────── Help ─────────────────────────────────┐▀██
+┌ ▶ Results ─│results keys                                                            │███
+│            │  ?                 help                  help.toggle                   │█▀
+│            │  Down              row down              results.scroll_down           │
+│            │  End               last row              results.last_row              │
+│            │  Home              first row             results.first_row             │────────────┐
+│            │  Left              columns left          results.scroll_left           │            │
+│            │  PageDown          page down             results.page_down             │a database. │
+│            │  PageUp            page up               results.page_up               │mmands.     │
+│            │  Right             columns right         results.scroll_right          │────────────┘
+│            │  Up                row up                results.scroll_up             │────────────┐
+│            │  [                 previous result       results.prev_tab              │            │
+│            │  ]                 next result           results.next_tab              │            │
+│            │  c                 connect               connection.open               │            │
+│            │  e                 edit                  focus.editor                  │            │
 │            │  q                 quit                  app.quit                      │            │
 │            │  r                 run                   query.run_statement           │            │
-│            │                                                                        │            │
-│No results y│global keys                                                             │            │
-└────────────│  Alt+1             focus context         focus.context                 │            │
-┌ Editor ────│  Alt+2             edit                  focus.editor                  │            │
-│1           │  Alt+3             focus results         focus.results                 │            │
+│No results y│                                                                        │            │
+└────────────│global keys                                                             │            │
+┌ Editor ────│  Alt+1             focus context         focus.context                 │            │
+│1           │  Alt+2             edit                  focus.editor                  │            │
+│            │  Alt+3             focus results         focus.results                 │            │
 │            │  Alt+4             focus session         focus.session                 │            │
 │            │  Alt+Left          previous buffer       buffer.prev                   │            │
 │            │  Alt+O             reconnect             connection.reconnect          │            │
-│            └─────────────────── Up/Down scroll  ? close  (1/27) ────────────────────┘            │
-└──────────────────────────────────────────────────────────────┘└──────────────────────────────────┘
+└────────────└─────────────────── Up/Down scroll  ? close  (1/27) ────────────────────┘────────────┘
+C connect  R run  E edit  Q quit  ? help
  no connection │ focus: Results │ Ln 1, Col 1

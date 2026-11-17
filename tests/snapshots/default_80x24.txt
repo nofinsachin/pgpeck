@@ -1,14 +1,13 @@
-┌ Session ─────────────────────────────────────────────────────────────────────┐
-│Not connected                                                                 │
-│Ctrl+R run  Esc commands  Ctrl+O connect                                      │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌ Results ─────────────────────────────────┐┌ Context ─────────────────────────┐
-│                                          ││Welcome to pgpeck.                │
-│                                          ││Press C to connect to a database. │
-│                                          ││Press Esc for commands.           │
+┌ Session ─────────────────────────────────┐┌ Context ─────────────────────────┐
+│Not connected                             ││Welcome to pgpeck.                │
+└──────────────────────────────────────────┘│Press C to connect to a database. │
+┌ Results ─────────────────────────────────┐│Press Esc for commands.           │
 │                                          │└──────────────────────────────────┘
 │                                          │┌ Trends ──────────────────────────┐
 │                                          ││Not connected                     │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
@@ -21,4 +20,5 @@
 │                                          ││                                  │
 │                                          ││                                  │
 └──────────────────────────────────────────┘└──────────────────────────────────┘
+Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 1, Col 1

@@ -23,9 +23,12 @@ const TRENDS_MIN_HEIGHT: u16 = 13;
 /// The logo above the context pane, shown when the column has room for it
 /// on top of everything else.
 pub const LOGO_HEIGHT: u16 = 7;
-/// The session strip across the top: a line of text and the borders. When the
-/// hint bar is on, its keys take a second line inside the strip.
+/// The session strip above the results: one line of text and the borders.
+/// On a wide terminal the key hints share that line, so there is no hint bar
+/// under the panes.
 const SESSION_HEIGHT: u16 = 3;
+/// Width of the left column from which the key hints move onto that line.
+const STRIP_HINTS_MIN_WIDTH: u16 = 100;
 
 /// The editor is a strip at the bottom of the left column: this share of its
 /// height, and never less than `EDITOR_MIN_HEIGHT` (borders included).
@@ -48,17 +51,16 @@ pub struct Areas {
     pub status: Rect,
 }
 
-/// Height of the session strip across the top.
-pub fn session_height(config: &Config) -> u16 {
-    SESSION_HEIGHT + u16::from(config.ui.show_hint_bar)
-}
-
 pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     let tiny = area.width < MIN_SIZE.0 || area.height < MIN_SIZE.1;
     // With room for it, the strip carries the key hints and the bottom hint
     // bar goes away.
-    let strip = !tiny && state.show_context && area.height > session_height(config) + 6;
-    let hint_height = u16::from(config.ui.show_hint_bar && !strip);
+    let strip = !tiny && state.show_context && area.height > SESSION_HEIGHT + 6;
+    // The hints join the session line only when the left column is wide enough
+    // for both. Otherwise the hint bar stays at the bottom.
+    let side_width = (area.width * SIDE_SHARE / 100).clamp(SIDE_MIN_WIDTH, SIDE_MAX_WIDTH);
+    let hints_in_strip = strip && area.width.saturating_sub(side_width) >= STRIP_HINTS_MIN_WIDTH;
+    let hint_height = u16::from(config.ui.show_hint_bar && !hints_in_strip);
     let [body, hint, status] = Split::vertical([
         Constraint::Min(1),
         Constraint::Length(hint_height),
@@ -76,18 +78,6 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         results: None,
         hint,
         status,
-    };
-
-    let body = if strip {
-        let [session, rest] = Split::vertical([
-            Constraint::Length(session_height(config)),
-            Constraint::Min(1),
-        ])
-        .areas(body);
-        areas.session = Some(session);
-        rest
-    } else {
-        body
     };
 
     if tiny {
@@ -111,6 +101,16 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         (left, Some(side))
     } else {
         (body, None)
+    };
+
+    // The session strip heads the left column.
+    let left = if strip {
+        let [session, rest] =
+            Split::vertical([Constraint::Length(SESSION_HEIGHT), Constraint::Min(1)]).areas(left);
+        areas.session = Some(session);
+        rest
+    } else {
+        left
     };
 
     let editor_height = (left.height * EDITOR_SHARE / 100).max(EDITOR_MIN_HEIGHT);

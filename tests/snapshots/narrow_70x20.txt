@@ -1,20 +1,20 @@
-┌ Session ───────────────────────────────────────────────────────────┐
-│Not connected                                                       │
-│Ctrl+R run  Esc commands  Ctrl+O connect                            │
-└────────────────────────────────────────────────────────────────────┘
-┌ Results ───────────────────────┐                ▄▄▄▄▄▄▄
-│                                │             ▄██████████▄
-│                                │         ◀████████  ●  ▀██
-│                                │              ████████████
-│                                │               ▀████████▀
-│                                │                ▀▀▀▀▀▀▀
-│                                │                PGPeck
-│No results yet. Run with Ctrl+R.│┌ Context ─────────────────────────┐
-└────────────────────────────────┘│Welcome to pgpeck.                │
-┌ ▶ Editor ──────────────────────┐│Press C to connect to a database. │
-│1                               ││Press Esc for commands.           │
+┌ Session ───────────────────────┐┌ Context ─────────────────────────┐
+│Not connected                   ││Welcome to pgpeck.                │
+└────────────────────────────────┘│Press C to connect to a database. │
+┌ Results ───────────────────────┐│Press Esc for commands.           │
+│                                │└──────────────────────────────────┘
+│                                │┌ Trends ──────────────────────────┐
+│                                ││Not connected                     │
+│                                ││                                  │
+│                                ││                                  │
+│                                ││                                  │
+│No results yet. Run with Ctrl+R.││                                  │
+└────────────────────────────────┘│                                  │
+┌ ▶ Editor ──────────────────────┐│                                  │
+│1                               ││                                  │
 │                                ││                                  │
 │                                ││                                  │
 │                                ││                                  │
 └────────────────────────────────┘└──────────────────────────────────┘
+Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 1, Col 1

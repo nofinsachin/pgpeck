@@ -1,5 +1,5 @@
-┌ Session ───────────────────────────────────────────────────────────────────────────────┐
-│Session: 127.0.0.1  Database: 127.0.0.1:5432, alice, app  TLS off                       │
+┌ Session ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│Session: 127.0.0.1  Database: 127.0.0.1:5432, alice,││Buffer     Buffer 1               │
 ┌───────────────────────────────────────── Find ─────────────────────────────────────────┐
 │> order                                                                                 │
 │Tables                                                                                  │
@@ -20,5 +20,5 @@
 │Enter insert name  Alt+S select sample rows  Alt+C columns of this one  Esc close       │
 │Only: Alt+T table  V view  M matview  O foreign  F function  Y type  N schema           │
 └────────────────────────────────────────────────────────────────────────────────────────┘
-└────────────────────────────────────────────────────┘└──────────────────────────────────┘
+Ctrl+R run  Esc commands  Ctrl+O connect
  (uri) │ app │ alice │ no TLS │ focus: Editor │ Ln 1, Col 1
