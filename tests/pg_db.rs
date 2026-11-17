@@ -1,17 +1,17 @@
 //! Integration tests against a real PostgreSQL. They run only when
-//! `OXPECKER_TEST_DATABASE_URL` is set, for example:
+//! `PGPECK_TEST_DATABASE_URL` is set, for example:
 //!
 //! ```text
-//! OXPECKER_TEST_DATABASE_URL=postgres://oxpecker:oxpecker@127.0.0.1:54329/oxpecker cargo test --test pg_db
+//! PGPECK_TEST_DATABASE_URL=postgres://pgpeck:pgpeck@127.0.0.1:54329/pgpeck cargo test --test pg_db
 //! ```
 
 use std::time::Duration;
 
-use oxpecker::db::{self, Session};
-use oxpecker::profile::parse_uri;
+use pgpeck::db::{self, Session};
+use pgpeck::profile::parse_uri;
 
 fn url() -> Option<String> {
-    std::env::var("OXPECKER_TEST_DATABASE_URL")
+    std::env::var("PGPECK_TEST_DATABASE_URL")
         .ok()
         .filter(|u| !u.is_empty())
 }
@@ -22,7 +22,7 @@ macro_rules! database {
         match url() {
             Some(url) => url,
             None => {
-                eprintln!("skipped: OXPECKER_TEST_DATABASE_URL is not set");
+                eprintln!("skipped: PGPECK_TEST_DATABASE_URL is not set");
                 return;
             }
         }
@@ -47,7 +47,7 @@ async fn connects_and_reports_the_server() {
 }
 
 #[tokio::test]
-async fn the_connection_is_named_oxpecker() {
+async fn the_connection_is_named_pgpeck() {
     let url = database!();
     let (session, _) = connect(&url).await;
     let out = db::run(&session, "select current_setting('application_name')", 10).await;
@@ -61,7 +61,7 @@ async fn the_connection_is_named_oxpecker() {
 async fn a_wrong_password_is_an_auth_failure_that_does_not_echo_it() {
     let url = database!();
     let mut uri = parse_uri(&url).expect("parse");
-    uri.password = Some(oxpecker::secrets::Secret::new("definitely-wrong-pw-123"));
+    uri.password = Some(pgpeck::secrets::Secret::new("definitely-wrong-pw-123"));
     let user = uri.profile.user.clone().expect("user");
     let error = db::connect(&uri.profile, &user, uri.password.as_ref(), |_| {})
         .await
@@ -256,7 +256,7 @@ async fn a_dropped_connection_is_reported_once() {
 
 #[tokio::test]
 async fn the_transaction_state_is_reported_after_each_run() {
-    use oxpecker::db::TxState;
+    use pgpeck::db::TxState;
     let url = database!();
     let (session, _) = connect(&url).await;
 
@@ -304,7 +304,7 @@ async fn statistics_count_only_the_connected_database() {
     }
 
     // Other tests share the server, so count in a database of our own.
-    let name = format!("oxpecker_stats_{}", std::process::id());
+    let name = format!("pgpeck_stats_{}", std::process::id());
     let created = db::run(&admin, &format!("create database {name}"), 1).await;
     if created.error.is_some() {
         eprintln!("skipped the per-database part: this role cannot create databases");
@@ -337,7 +337,7 @@ async fn statistics_count_only_the_connected_database() {
 
 #[tokio::test]
 async fn statistics_do_not_disturb_a_transaction() {
-    use oxpecker::db::TxState;
+    use pgpeck::db::TxState;
     let url = database!();
     let (session, _) = connect(&url).await;
     db::run(&session, "begin", 10).await;
@@ -353,7 +353,7 @@ async fn statistics_do_not_disturb_a_transaction() {
 async fn a_plain_role_gets_numbers_but_not_other_roles_activity() {
     let url = database!();
     let (admin, info) = connect(&url).await;
-    let role = format!("oxpecker_plain_{}", std::process::id());
+    let role = format!("pgpeck_plain_{}", std::process::id());
     let created = db::run(
         &admin,
         &format!("create role {role} login password 'plain-pw'"),
@@ -366,7 +366,7 @@ async fn a_plain_role_gets_numbers_but_not_other_roles_activity() {
     }
     let mut profile = parse_uri(&url).expect("url").profile;
     profile.database = Some(info.database.clone());
-    let password = oxpecker::secrets::Secret::new("plain-pw");
+    let password = pgpeck::secrets::Secret::new("plain-pw");
     let result = db::connect(&profile, &role, Some(&password), |_| {}).await;
     let stats = match &result {
         Ok((session, _)) => Some(db::stats(session).await),
@@ -385,7 +385,7 @@ async fn a_plain_role_gets_numbers_but_not_other_roles_activity() {
 
 #[tokio::test]
 async fn the_catalog_lists_user_objects_with_their_schemas() {
-    use oxpecker::catalog::Kind;
+    use pgpeck::catalog::Kind;
     let url = database!();
     let (session, _) = connect(&url).await;
     let setup = "

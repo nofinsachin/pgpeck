@@ -1,5 +1,5 @@
 ┌ ▶ Context ───────────────────────┐┌ Session ─────────────────────────────────┐
-│Welcome to oxpecker.              ││Not connected                             │
+│Welcome to pgpeck.                ││Not connected                             │
 │Press C to connect to a database. ││                                          │
 │                                  ││                                          │
 │                                  ││                                          │

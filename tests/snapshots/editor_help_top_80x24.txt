@@ -1,5 +1,5 @@
 ┌ Context ─────────────────────────┐┌ Session ─────────────────────────────────┐
-│Welcome to oxpecker.              ││Not connected                             │
+│Welcome to pgpeck.                ││Not connected                             │
 │Pr┌───────────────────────────────── Help ─────────────────────────────────┐  │
 │Pr│editor keys                                                             │  │
 │  │  Alt+/             show suggestions      completion.trigger            │  │

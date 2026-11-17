@@ -2,26 +2,26 @@
 //!
 //! These drive the real `App` and `Runtime` and read the rendered screen, so
 //! they check what a user would see. They run only when
-//! `OXPECKER_TEST_DATABASE_URL` is set.
+//! `PGPECK_TEST_DATABASE_URL` is set.
 
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use oxpecker::app::{App, ConnStatus, Dialog};
-use oxpecker::config::Config;
-use oxpecker::events::Event;
-use oxpecker::keymap::Keymap;
-use oxpecker::profile::{parse_uri, Profile};
-use oxpecker::runtime::Runtime;
-use oxpecker::secrets::Source;
-use oxpecker::theme::Theme;
-use oxpecker::ui;
+use pgpeck::app::{App, ConnStatus, Dialog};
+use pgpeck::config::Config;
+use pgpeck::events::Event;
+use pgpeck::keymap::Keymap;
+use pgpeck::profile::{parse_uri, Profile};
+use pgpeck::runtime::Runtime;
+use pgpeck::secrets::Source;
+use pgpeck::theme::Theme;
+use pgpeck::ui;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 fn url() -> Option<String> {
-    std::env::var("OXPECKER_TEST_DATABASE_URL")
+    std::env::var("PGPECK_TEST_DATABASE_URL")
         .ok()
         .filter(|u| !u.is_empty())
 }
@@ -31,7 +31,7 @@ macro_rules! database {
         match url() {
             Some(url) => url,
             None => {
-                eprintln!("skipped: OXPECKER_TEST_DATABASE_URL is not set");
+                eprintln!("skipped: PGPECK_TEST_DATABASE_URL is not set");
                 return;
             }
         }
@@ -386,10 +386,10 @@ async fn an_environment_password_is_used_without_asking() {
     let url = database!();
     let mut h = Harness::with(vec![Source::Env, Source::Prompt], 10_000, None);
     let mut profile = url_without_password(&url);
-    profile.password_env = Some("OXPECKER_TEST_PW_FOR_PROFILE".to_string());
+    profile.password_env = Some("PGPECK_TEST_PW_FOR_PROFILE".to_string());
     h.app.state.profiles.add(profile).expect("add");
     // The runtime reads the real environment, so set the variable for this process.
-    std::env::set_var("OXPECKER_TEST_PW_FOR_PROFILE", password_of(&url));
+    std::env::set_var("PGPECK_TEST_PW_FOR_PROFILE", password_of(&url));
     h.key(KeyCode::Char('c'), KeyModifiers::NONE);
     h.type_text("test");
     h.enter();
@@ -424,10 +424,10 @@ async fn a_dropped_connection_is_reported_and_reconnect_works() {
     // Another session ends this one's backend.
     let uri = parse_uri(&url).expect("parse");
     let user = uri.profile.user.clone().expect("user");
-    let (other, _) = oxpecker::db::connect(&uri.profile, &user, uri.password.as_ref(), |_| {})
+    let (other, _) = pgpeck::db::connect(&uri.profile, &user, uri.password.as_ref(), |_| {})
         .await
         .expect("second connection");
-    let kill = oxpecker::db::run(&other, &format!("select pg_terminate_backend({pid})"), 1).await;
+    let kill = pgpeck::db::run(&other, &format!("select pg_terminate_backend({pid})"), 1).await;
     assert!(kill.error.is_none());
 
     h.until("the loss to be noticed", |a| {
@@ -503,7 +503,7 @@ async fn an_unreachable_server_fails_clearly_and_does_not_hang_the_ui() {
 async fn saving_a_profile_writes_a_private_file_without_the_password() {
     use std::os::unix::fs::PermissionsExt;
     let url = database!();
-    let dir = std::env::temp_dir().join(format!("oxpecker-e2e-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pgpeck-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let path = dir.join("connections.toml");
     let mut h = Harness::with(vec![Source::Prompt], 10_000, Some(path.clone()));
@@ -574,7 +574,7 @@ async fn connect_by_typing_the_details() {
     })
     .await;
     // Straight to the editor, ready to type.
-    assert_eq!(h.app.state.focus, oxpecker::app::Pane::Editor);
+    assert_eq!(h.app.state.focus, pgpeck::app::Pane::Editor);
     h.run("select 'typed by hand' as how").await;
     assert!(h.screen().contains("typed by hand"));
     assert!(
@@ -587,7 +587,7 @@ async fn connect_by_typing_the_details() {
 async fn a_connection_made_in_the_form_can_be_saved_and_is_listed_next_time() {
     let url = database!();
     let profile = parse_uri(&url).expect("parse").profile;
-    let dir = std::env::temp_dir().join(format!("oxpecker-e2e-form-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pgpeck-e2e-form-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let path = dir.join("connections.toml");
     let mut h = Harness::with(vec![Source::Prompt], 10_000, Some(path.clone()));
@@ -620,7 +620,7 @@ async fn a_connection_made_in_the_form_can_be_saved_and_is_listed_next_time() {
     );
 
     // A new session sees it in the list.
-    let (loaded, problems) = oxpecker::profile::Profiles::parse(&text);
+    let (loaded, problems) = pgpeck::profile::Profiles::parse(&text);
     assert!(problems.is_empty(), "{problems:?}");
     let mut next = Harness::with(vec![Source::Prompt], 10_000, None);
     next.app.state.profiles = loaded;
@@ -650,7 +650,7 @@ async fn transactions_are_flagged_and_rolled_back_with_one_key() {
         a.state.running.is_none()
             && a.state
                 .active_connection()
-                .is_some_and(|c| c.tx == oxpecker::db::TxState::Idle)
+                .is_some_and(|c| c.tx == pgpeck::db::TxState::Idle)
     })
     .await;
     let screen = h.screen();
@@ -665,9 +665,9 @@ async fn a_delete_without_where_waits_for_a_yes() {
     let url = database!();
     let mut h = Harness::new();
     h.connect_with_uri(&url).await;
-    h.run("create temp table oxpecker_confirm (a int)").await;
+    h.run("create temp table pgpeck_confirm (a int)").await;
 
-    h.feed(Event::Paste("delete from oxpecker_confirm".to_string()));
+    h.feed(Event::Paste("delete from pgpeck_confirm".to_string()));
     h.key(KeyCode::Char('a'), KeyModifiers::CONTROL);
     h.key(KeyCode::Char('r'), KeyModifiers::CONTROL);
     assert!(
@@ -676,7 +676,7 @@ async fn a_delete_without_where_waits_for_a_yes() {
     );
     let screen = h.screen();
     assert!(
-        screen.contains("Confirm") && screen.contains("delete from oxpecker_confirm"),
+        screen.contains("Confirm") && screen.contains("delete from pgpeck_confirm"),
         "{screen}"
     );
 

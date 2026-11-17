@@ -13,17 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Throwaway credentials for the disposable service container below.
-      OXPECKER_TEST_DATABASE_URL: postgres://oxtest:s3cr3t-Pw-7731@127.0.0.1:5432/oxpecker
+      PGPECK_TEST_DATABASE_URL: postgres://oxtest:s3cr3t-Pw-7731@127.0.0.1:5432/pgpeck
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: oxtest
           POSTGRES_PASSWORD: s3cr3t-Pw-7731
-          POSTGRES_DB: oxpecker
+          POSTGRES_DB: pgpeck
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U oxtest -d oxpecker"
+          --health-cmd "pg_isready -U oxtest -d pgpeck"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10

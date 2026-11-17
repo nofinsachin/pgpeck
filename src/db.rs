@@ -16,7 +16,7 @@ use crate::sql;
 pub type ConnId = u64;
 
 /// Set on every connection so sessions can be recognized in `pg_stat_activity`.
-pub const APPLICATION_NAME: &str = "oxpecker";
+pub const APPLICATION_NAME: &str = "pgpeck";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 

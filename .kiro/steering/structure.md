@@ -2,12 +2,12 @@
 inclusion: always
 ---
 
-# Oxpecker: Project Structure
+# pgpeck: Project Structure
 
 ## Repository layout
 
 ```
-oxpecker/
+pgpeck/
 ├── Cargo.toml
 ├── README.md
 ├── .kiro/
@@ -77,7 +77,7 @@ This layout is a starting point. Add a module when it has a clear purpose, and m
 ## Configuration files
 
 - `config/default.toml` is documented with a comment for each option. It is the reference for users.
-- Project-local config (`.oxpecker.toml`) can override user config but cannot weaken safety settings for production connections (CFG-006).
+- Project-local config (`.pgpeck.toml`) can override user config but cannot weaken safety settings for production connections (CFG-006).
 - User config lives in the platform config directory. Its file mode is restricted to the owner (SEC-003).
 - History and snippets live in the platform data directory, with owner-only permissions.
 

@@ -2,11 +2,11 @@
 inclusion: always
 ---
 
-# Oxpecker: Product
+# pgpeck: Product
 
 ## What it is
 
-Oxpecker is a fast, terminal-based PostgreSQL client written in Rust. It is a modern alternative to `psql` with a full-screen TUI: a SQL editor, a results grid, and an object explorer, all keyboard-driven.
+pgpeck is a fast, terminal-based PostgreSQL client written in Rust. It is a modern alternative to `psql` with a full-screen TUI: a SQL editor, a results grid, and an object explorer, all keyboard-driven.
 
 ## Target users
 
@@ -17,7 +17,7 @@ Oxpecker is a fast, terminal-based PostgreSQL client written in Rust. It is a mo
 ## Product principles
 
 - **Keyboard-first.** Every action is reachable from the keyboard. Mouse support is optional.
-- **Simple keys first.** Oxpecker starts on a commands pane where one plain key is enough: `C` connects, `R` runs, `E` edits, `N` opens a buffer, `Q` quits. Esc leaves the editor. Function keys and chords are never required for the main tasks.
+- **Simple keys first.** pgpeck starts on a commands pane where one plain key is enough: `C` connects, `R` runs, `E` edits, `N` opens a buffer, `Q` quits. Esc leaves the editor. Function keys and chords are never required for the main tasks.
 - **Modeless.** The editor always accepts text. No key changes what typing does. Focus moves between panes with keys that never produce characters.
 - **Fast.** Typing latency, focus changes, and startup are measured against requirements (PRF-001 to PRF-003). Background work never freezes the UI.
 - **Discoverable.** A hint bar, a help overlay, and a command palette (`Ctrl+P`) expose features without reading docs.
@@ -60,5 +60,5 @@ Requirements are defined in the UX requirements document, using stable IDs (for 
 
 - `Ctrl+R` runs the statement under the cursor. With a selection, it runs the selection. In the commands pane and the results pane, `R` does the same.
 - `Ctrl+C` cancels a running query. Otherwise it is unbound. **Open** (see the UX open questions).
-- Oxpecker never stores a password. It asks each time. Users can opt in to reading `.pgpass` or an environment variable through configuration. Passwords are never logged or shown on screen.
+- pgpeck never stores a password. It asks each time. Users can opt in to reading `.pgpass` or an environment variable through configuration. Passwords are never logged or shown on screen.
 - Only the editor accepts printable characters. Single-letter shortcuts in other panes only work when those panes have focus.

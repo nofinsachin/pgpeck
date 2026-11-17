@@ -1,5 +1,5 @@
 //! The "new connection" form: connection details typed by hand. There is no
-//! password field, because oxpecker never stores one and asks when it
+//! password field, because pgpeck never stores one and asks when it
 //! connects. Pure logic.
 
 use crate::profile::{Profile, SslMode};

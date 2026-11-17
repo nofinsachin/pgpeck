@@ -14,10 +14,10 @@ fn xdg(var: &str, home_relative: &str) -> Option<PathBuf> {
 
 /// Directory for user configuration (`config.toml`, `keymap.toml`, `themes/`).
 pub fn config_dir() -> Option<PathBuf> {
-    Some(xdg("XDG_CONFIG_HOME", ".config")?.join("oxpecker"))
+    Some(xdg("XDG_CONFIG_HOME", ".config")?.join("pgpeck"))
 }
 
 /// Directory for logs and other state.
 pub fn state_dir() -> Option<PathBuf> {
-    Some(xdg("XDG_STATE_HOME", ".local/state")?.join("oxpecker"))
+    Some(xdg("XDG_STATE_HOME", ".local/state")?.join("pgpeck"))
 }

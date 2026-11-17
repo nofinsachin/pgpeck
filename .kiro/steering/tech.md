@@ -2,7 +2,7 @@
 inclusion: always
 ---
 
-# Oxpecker: Technology Stack
+# pgpeck: Technology Stack
 
 ## Language and toolchain
 

@@ -24,9 +24,9 @@ pub fn init() -> Option<WorkerGuard> {
     let dir = crate::paths::state_dir()?;
     create_private_dir(&dir).ok()?;
 
-    let appender = tracing_appender::rolling::daily(&dir, "oxpecker.log");
+    let appender = tracing_appender::rolling::daily(&dir, "pgpeck.log");
     let (writer, guard) = tracing_appender::non_blocking(appender);
-    let filter = EnvFilter::try_from_env("OXPECKER_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_env("PGPECK_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
         .with_writer(writer)
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn private_dir_is_owner_only() {
-        let base = std::env::temp_dir().join(format!("oxpecker-test-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("pgpeck-test-{}", std::process::id()));
         let dir = base.join("a/b");
         create_private_dir(&dir).expect("create dir");
         let mode = std::fs::metadata(&dir)

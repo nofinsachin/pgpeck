@@ -1,5 +1,5 @@
 //! Connection profiles (R1): everything needed to connect except the password,
-//! which oxpecker never stores.
+//! which pgpeck never stores.
 //!
 //! Profiles live in `connections.toml` in the config directory, one table per
 //! profile. The file is written with owner-only permissions (R2.6). Entries
@@ -856,7 +856,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("oxpecker-profile-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("pgpeck-profile-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

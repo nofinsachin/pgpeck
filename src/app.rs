@@ -3675,7 +3675,7 @@ mod tests {
     }
 
     #[test]
-    fn oxpecker_starts_on_the_commands_pane() {
+    fn pgpeck_starts_on_the_commands_pane() {
         let a = landing();
         assert_eq!(a.state.focus, Pane::Context);
         assert!(a.state.dialog.is_none());

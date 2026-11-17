@@ -147,7 +147,7 @@ fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let lines: Vec<Line> = match st.active_connection() {
         None => {
             let mut lines = vec![
-                Line::styled("Welcome to oxpecker.", bold),
+                Line::styled("Welcome to pgpeck.", bold),
                 Line::styled(
                     format!(
                         "Press {} to connect to a database.",
@@ -268,7 +268,7 @@ fn draw_art(frame: &mut Frame, theme: &Theme, area: Rect) {
             )
         })
         .collect();
-    lines.push(Line::styled(" oxpecker", body.add_modifier(Modifier::BOLD)));
+    lines.push(Line::styled(" pgpeck", body.add_modifier(Modifier::BOLD)));
     frame.render_widget(Paragraph::new(lines), area);
 }
 
@@ -2126,7 +2126,7 @@ mod tests {
     fn the_screen_at_startup_invites_you_to_connect() {
         let out = render(&landing(80, 24), 80, 24);
         for expected in [
-            "Welcome to oxpecker.",
+            "Welcome to pgpeck.",
             "Press C to connect to a database.",
             "C connect  F find  R run  E edit  N new buffer  Q quit  ? help",
             "┌ ▶ Context",
@@ -2911,12 +2911,12 @@ mod tests {
         let first = out.lines().next().expect("row");
         assert!(first.starts_with("     ,--."), "{first}");
         assert!(out.lines().any(|l| l.contains("==>")));
-        assert!(out.lines().any(|l| l.starts_with(" oxpecker")));
+        assert!(out.lines().any(|l| l.starts_with(" pgpeck")));
         assert!(out.contains("┌ Context"), "context stays");
         assert_snapshot("art_120x24", &out);
 
         let narrow = connected_app(100, 24);
         let out = render(&narrow, 100, 24);
-        assert!(!out.contains("==>") && !out.contains(" oxpecker"), "{out}");
+        assert!(!out.contains("==>") && !out.contains(" pgpeck"), "{out}");
     }
 }

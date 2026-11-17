@@ -1,7 +1,7 @@
-# Oxpecker default configuration. Every option is shown with its default value.
-# Copy this file to $XDG_CONFIG_HOME/oxpecker/config.toml (usually
-# ~/.config/oxpecker/config.toml) and change what you need.
-# Check your changes with: oxpecker --check-config
+# pgpeck default configuration. Every option is shown with its default value.
+# Copy this file to $XDG_CONFIG_HOME/pgpeck/config.toml (usually
+# ~/.config/pgpeck/config.toml) and change what you need.
+# Check your changes with: pgpeck --check-config
 
 [editor]
 # When true, Tab inserts an indent while the editor has focus.
@@ -30,8 +30,8 @@ show_hint_bar = true
 show_context_strip = true
 
 [connections]
-# Oxpecker never stores a password: it asks each time you connect. If you keep
-# passwords elsewhere you can let oxpecker read them, in this order.
+# pgpeck never stores a password: it asks each time you connect. If you keep
+# passwords elsewhere you can let pgpeck read them, in this order.
 #   pgpass    ~/.pgpass, or the file named by $PGPASSFILE (must be mode 0600)
 #   env       $PGPASSWORD, or the variable named by a profile's password_env
 #   prompt    ask in the interface

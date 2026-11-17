@@ -1,4 +1,4 @@
-# Oxpecker default keymap.
+# pgpeck default keymap.
 #
 # Format: [scope] then "key" = "action.name". Your own keymap.toml is laid over
 # this file. A key you bind replaces the default for that key. Bind a key to
@@ -115,7 +115,7 @@
 "up" = "completion.prev"
 
 [context]
-# This is the commands pane. It has focus when oxpecker starts, so a single
+# This is the commands pane. It has focus when pgpeck starts, so a single
 # key is enough. Typing SQL happens in the editor, which never gives up letters.
 "c" = "connection.open"
 "f" = "find.open"

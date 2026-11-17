@@ -1,4 +1,4 @@
-//! Oxpecker: a terminal client for PostgreSQL.
+//! pgpeck: a terminal client for PostgreSQL.
 //!
 //! The binary in `main.rs` is a thin shell around this library, which lets
 //! integration tests use the same code.

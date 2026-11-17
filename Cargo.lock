@@ -987,22 +987,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpecker"
-version = "0.1.0"
-dependencies = [
- "crossterm",
- "futures-util",
- "ratatui",
- "tokio",
- "tokio-postgres",
- "toml",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "unicode-width",
-]
-
-[[package]]
 name = "palette"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1115,6 +1099,22 @@ checksum = "9ac6154fd4418b8f0b82532c59c26f303f9ca59a64c883e8ce3971fd82733439"
 dependencies = [
  "psm",
  "stacker",
+]
+
+[[package]]
+name = "pgpeck"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "futures-util",
+ "ratatui",
+ "tokio",
+ "tokio-postgres",
+ "toml",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "unicode-width",
 ]
 
 [[package]]

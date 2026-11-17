@@ -1,6 +1,6 @@
 //! Passwords. This is the only module that reads them (R2).
 //!
-//! Oxpecker never stores a password. By default it asks every time. Users can
+//! pgpeck never stores a password. By default it asks every time. Users can
 //! opt in to reading one that they already keep elsewhere: a `.pgpass` file or
 //! an environment variable. The prompt itself is a UI concern, so lookup only
 //! reports that one is needed.
@@ -299,7 +299,7 @@ pub mod tests {
         assert_eq!(
             Source::from_name("keychain"),
             None,
-            "oxpecker has no keychain support"
+            "pgpeck has no keychain support"
         );
     }
 
@@ -372,7 +372,7 @@ db.example.com:*:app:alice:with\\:colon\\\\and:more
     fn temp_file(name: &str, contents: &str, mode: u32) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let dir =
-            std::env::temp_dir().join(format!("oxpecker-secrets-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("pgpeck-secrets-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("pgpass");
         std::fs::write(&path, contents).expect("write");

@@ -2,13 +2,13 @@
 
 ## Introduction
 
-Oxpecker is a keyboard-driven, modeless, terminal-based PostgreSQL client written in Rust. It provides a full-screen SQL editor, a results grid, and a schema explorer built from three surfaces: a find overlay, a relationship view, and a context strip. There is no permanent object tree.
+pgpeck is a keyboard-driven, modeless, terminal-based PostgreSQL client written in Rust. It provides a full-screen SQL editor, a results grid, and a schema explorer built from three surfaces: a find overlay, a relationship view, and a context strip. There is no permanent object tree.
 
 This document covers the first usable release. Requirement IDs from the UX requirements document (for example, `EDT-020`, `RUN-001`, `SAF-002`) are referenced where they apply. Where this document supersedes an earlier UX requirement, it says so.
 
 ## Glossary
 
-- **Oxpecker**: The terminal application described by this document.
+- **pgpeck**: The terminal application described by this document.
 - **Editor**: The multi-line SQL text pane. It is the only pane that accepts printable characters.
 - **Pane**: A top-level screen region: editor, context strip, results, or status bar.
 - **Focus**: The single pane that receives key input at a given time.
@@ -94,7 +94,7 @@ This document covers the first usable release. Requirement IDs from the UX requi
 3. IF two actions in the same scope share a key THEN the system SHALL report the conflict at load time and refuse the duplicate binding.
 4. IF a configured key cannot be delivered by the terminal THEN the system SHALL warn the user and use the documented fallback key, and the status bar SHALL indicate the fallback.
 5. THE system SHALL provide at least one binding for each core action that works in terminals without advanced keyboard protocols.
-6. WHEN the user runs `oxpecker --check-config` THEN the system SHALL validate the configuration and keymap without starting the interface.
+6. WHEN the user runs `pgpeck --check-config` THEN the system SHALL validate the configuration and keymap without starting the interface.
 7. WHERE the user requests the keyboard reference THEN the system SHALL display all bindings for the focused scope and the global scope.
 
 ### Requirement 6: SQL editor
