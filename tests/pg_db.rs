@@ -50,7 +50,13 @@ async fn connects_and_reports_the_server() {
 async fn the_connection_is_named_pgpeck() {
     let url = database!();
     let (session, _) = connect(&url).await;
-    let out = db::run(&session, "select current_setting('application_name')", 10).await;
+    let out = db::run(
+        &session,
+        "select current_setting('application_name')",
+        10,
+        &Default::default(),
+    )
+    .await;
     assert_eq!(
         out.sets[0].rows[0][0].as_deref(),
         Some(db::APPLICATION_NAME)
@@ -90,6 +96,7 @@ async fn null_is_not_an_empty_string() {
         &session,
         "select null::text as n, ''::text as e, 'x' as v",
         10,
+        &Default::default(),
     )
     .await;
     assert!(out.error.is_none());
@@ -106,7 +113,13 @@ async fn null_is_not_an_empty_string() {
 async fn a_select_with_no_rows_still_has_its_columns() {
     let url = database!();
     let (session, _) = connect(&url).await;
-    let out = db::run(&session, "select 1 as a, 2 as b where false", 10).await;
+    let out = db::run(
+        &session,
+        "select 1 as a, 2 as b where false",
+        10,
+        &Default::default(),
+    )
+    .await;
     let set = &out.sets[0];
     assert_eq!(
         (set.columns.len(), set.rows.len(), set.total_rows),
@@ -120,7 +133,7 @@ async fn several_statements_give_one_result_each() {
     let (session, _) = connect(&url).await;
     let sql = "create temp table t (a int); insert into t values (1),(2),(3); select a from t order by a; \
                update t set a = a + 1; delete from t where a > 3; select count(*) from t";
-    let out = db::run(&session, sql, 10).await;
+    let out = db::run(&session, sql, 10, &Default::default()).await;
     assert!(out.error.is_none(), "{:?}", out.error);
     let tags: Vec<&str> = out.sets.iter().map(|s| s.tag.as_str()).collect();
     assert_eq!(
@@ -145,6 +158,7 @@ async fn an_error_keeps_earlier_results_and_reports_a_position() {
         &session,
         "select 1; select * from no_such_table_xyz; select 3",
         10,
+        &Default::default(),
     )
     .await;
     assert_eq!(out.sets.len(), 1, "the statement before the error is kept");
@@ -153,7 +167,7 @@ async fn an_error_keeps_earlier_results_and_reports_a_position() {
     assert!(error.message.contains("no_such_table_xyz"));
     assert!(error.position.is_some());
     // The connection is still usable afterwards.
-    let again = db::run(&session, "select 42", 10).await;
+    let again = db::run(&session, "select 42", 10, &Default::default()).await;
     assert_eq!(again.sets[0].rows[0][0].as_deref(), Some("42"));
 }
 
@@ -161,7 +175,7 @@ async fn an_error_keeps_earlier_results_and_reports_a_position() {
 async fn syntax_errors_report_the_hint_fields() {
     let url = database!();
     let (session, _) = connect(&url).await;
-    let out = db::run(&session, "selct 1", 10).await;
+    let out = db::run(&session, "selct 1", 10, &Default::default()).await;
     let error = out.error.expect("error");
     assert_eq!(error.sqlstate.as_deref(), Some("42601"));
     assert_eq!(error.position, Some(1));
@@ -171,7 +185,13 @@ async fn syntax_errors_report_the_hint_fields() {
 async fn memory_is_bounded_by_the_row_limit_but_the_count_is_exact() {
     let url = database!();
     let (session, _) = connect(&url).await;
-    let out = db::run(&session, "select g from generate_series(1, 5000) g", 100).await;
+    let out = db::run(
+        &session,
+        "select g from generate_series(1, 5000) g",
+        100,
+        &Default::default(),
+    )
+    .await;
     let set = &out.sets[0];
     assert_eq!(set.rows.len(), 100);
     assert_eq!(set.total_rows, 5000);
@@ -183,7 +203,13 @@ async fn memory_is_bounded_by_the_row_limit_but_the_count_is_exact() {
 async fn very_long_values_are_clipped() {
     let url = database!();
     let (session, _) = connect(&url).await;
-    let out = db::run(&session, "select repeat('x', 100000)", 10).await;
+    let out = db::run(
+        &session,
+        "select repeat('x', 100000)",
+        10,
+        &Default::default(),
+    )
+    .await;
     let cell = out.sets[0].rows[0][0].as_deref().expect("value");
     assert!(cell.len() < 100_000 && cell.ends_with('…'));
 }
@@ -194,7 +220,9 @@ async fn a_running_statement_can_be_cancelled() {
     let (session, _) = connect(&url).await;
     let runner = {
         let session = session.clone();
-        tokio::spawn(async move { db::run(&session, "select pg_sleep(30)", 10).await })
+        tokio::spawn(async move {
+            db::run(&session, "select pg_sleep(30)", 10, &Default::default()).await
+        })
     };
     tokio::time::sleep(Duration::from_millis(300)).await;
     db::cancel(&session).await.expect("cancel request");
@@ -206,7 +234,7 @@ async fn a_running_statement_can_be_cancelled() {
     assert!(error.is_cancellation(), "{error:?}");
     assert!(out.elapsed < Duration::from_secs(5));
     // And the connection works again.
-    let again = db::run(&session, "select 1", 10).await;
+    let again = db::run(&session, "select 1", 10, &Default::default()).await;
     assert!(again.error.is_none());
 }
 
@@ -217,8 +245,7 @@ async fn text_values_round_trip_unicode_and_odd_types() {
     let out = db::run(
         &session,
         "select 'naïve 日本 💡', now() is not null, '{1,2}'::int[], '{\"a\":1}'::jsonb, 1.50::numeric, '\\xdead'::bytea",
-        10,
-    )
+        10, &Default::default())
     .await;
     assert!(out.error.is_none(), "{:?}", out.error);
     let row = &out.sets[0].rows[0];
@@ -243,9 +270,15 @@ async fn a_dropped_connection_is_reported_once() {
     .expect("connect");
     // A second connection ends the first one's backend.
     let (other, _) = connect(&url).await;
-    let out = db::run(&session, "select pg_backend_pid()", 1).await;
+    let out = db::run(&session, "select pg_backend_pid()", 1, &Default::default()).await;
     let pid = out.sets[0].rows[0][0].clone().expect("pid");
-    let kill = db::run(&other, &format!("select pg_terminate_backend({pid})"), 1).await;
+    let kill = db::run(
+        &other,
+        &format!("select pg_terminate_backend({pid})"),
+        1,
+        &Default::default(),
+    )
+    .await;
     assert!(kill.error.is_none());
     let reason = tokio::time::timeout(Duration::from_secs(5), rx)
         .await
@@ -260,30 +293,30 @@ async fn the_transaction_state_is_reported_after_each_run() {
     let url = database!();
     let (session, _) = connect(&url).await;
 
-    let out = db::run(&session, "select 1", 10).await;
+    let out = db::run(&session, "select 1", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Idle);
 
-    let out = db::run(&session, "begin", 10).await;
+    let out = db::run(&session, "begin", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Open, "an empty transaction counts");
 
-    let out = db::run(&session, "select 1", 10).await;
+    let out = db::run(&session, "select 1", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Open);
 
-    let out = db::run(&session, "select 1/0", 10).await;
+    let out = db::run(&session, "select 1/0", 10, &Default::default()).await;
     assert!(out.error.is_some());
     assert_eq!(out.tx, TxState::Failed);
 
-    let out = db::run(&session, "select 1", 10).await;
+    let out = db::run(&session, "select 1", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Failed, "stays failed until rolled back");
 
-    let out = db::run(&session, "rollback", 10).await;
+    let out = db::run(&session, "rollback", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Idle);
 
-    let out = db::run(&session, "begin; select 1; commit", 10).await;
+    let out = db::run(&session, "begin; select 1; commit", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Idle);
 
     // A multi-statement run that fails outside BEGIN leaves nothing open.
-    let out = db::run(&session, "select 1; select 1/0", 10).await;
+    let out = db::run(&session, "select 1; select 1/0", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Idle);
 }
 
@@ -305,7 +338,13 @@ async fn statistics_count_only_the_connected_database() {
 
     // Other tests share the server, so count in a database of our own.
     let name = format!("pgpeck_stats_{}", std::process::id());
-    let created = db::run(&admin, &format!("create database {name}"), 1).await;
+    let created = db::run(
+        &admin,
+        &format!("create database {name}"),
+        1,
+        &Default::default(),
+    )
+    .await;
     if created.error.is_some() {
         eprintln!("skipped the per-database part: this role cannot create databases");
         return;
@@ -331,7 +370,13 @@ async fn statistics_count_only_the_connected_database() {
 
     drop(mine);
     drop(_second);
-    let dropped = db::run(&admin, &format!("drop database {name} with (force)"), 1).await;
+    let dropped = db::run(
+        &admin,
+        &format!("drop database {name} with (force)"),
+        1,
+        &Default::default(),
+    )
+    .await;
     assert!(dropped.error.is_none(), "{:?}", dropped.error);
 }
 
@@ -340,13 +385,13 @@ async fn statistics_do_not_disturb_a_transaction() {
     use pgpeck::db::TxState;
     let url = database!();
     let (session, _) = connect(&url).await;
-    db::run(&session, "begin", 10).await;
+    db::run(&session, "begin", 10, &Default::default()).await;
     // The app skips statistics inside a transaction, but reading them must
     // still leave it open and usable.
     db::stats(&session).await.expect("stats");
-    let out = db::run(&session, "select 1", 10).await;
+    let out = db::run(&session, "select 1", 10, &Default::default()).await;
     assert_eq!(out.tx, TxState::Open);
-    db::run(&session, "rollback", 10).await;
+    db::run(&session, "rollback", 10, &Default::default()).await;
 }
 
 #[tokio::test]
@@ -358,6 +403,7 @@ async fn a_plain_role_gets_numbers_but_not_other_roles_activity() {
         &admin,
         &format!("create role {role} login password 'plain-pw'"),
         1,
+        &Default::default(),
     )
     .await;
     if created.error.is_some() {
@@ -373,7 +419,7 @@ async fn a_plain_role_gets_numbers_but_not_other_roles_activity() {
         Err(_) => None,
     };
     drop(result);
-    db::run(&admin, &format!("drop role {role}"), 1).await;
+    db::run(&admin, &format!("drop role {role}"), 1, &Default::default()).await;
     let Some(stats) = stats else {
         eprintln!("skipped: the server does not let the new role log in");
         return;
@@ -396,7 +442,7 @@ async fn the_catalog_lists_user_objects_with_their_schemas() {
         create materialized view oxp_cat.m as select id from oxp_cat.\"Mixed Case\";
         create function oxp_cat.f(a integer, b text) returns integer language sql as 'select 1';
         create type oxp_cat.mood as enum ('ok', 'bad');";
-    let out = db::run(&session, setup, 100).await;
+    let out = db::run(&session, setup, 100, &Default::default()).await;
     assert!(out.error.is_none(), "{:?}", out.error);
 
     let catalog = db::catalog(&session).await.expect("catalog");
@@ -425,7 +471,13 @@ async fn the_catalog_lists_user_objects_with_their_schemas() {
         "system schemas are left out"
     );
 
-    let out = db::run(&session, "drop schema oxp_cat cascade", 100).await;
+    let out = db::run(
+        &session,
+        "drop schema oxp_cat cascade",
+        100,
+        &Default::default(),
+    )
+    .await;
     assert!(out.error.is_none(), "{:?}", out.error);
 }
 
@@ -438,7 +490,7 @@ async fn the_largest_tables_are_listed_biggest_first() {
         create schema oxp_top;
         create table oxp_top.small as select generate_series(1, 10) as n;
         create table oxp_top.big as select generate_series(1, 200000) as n, md5(random()::text) as t;";
-    let out = db::run(&session, setup, 100).await;
+    let out = db::run(&session, setup, 100, &Default::default()).await;
     assert!(out.error.is_none(), "{:?}", out.error);
 
     let stats = db::stats(&session).await.expect("stats");
@@ -453,6 +505,110 @@ async fn the_largest_tables_are_listed_biggest_first() {
         .iter()
         .all(|t| !t.schema.starts_with("pg_") && t.schema != "information_schema"));
 
-    let out = db::run(&session, "drop schema oxp_top cascade", 100).await;
+    let out = db::run(
+        &session,
+        "drop schema oxp_top cascade",
+        100,
+        &Default::default(),
+    )
+    .await;
     assert!(out.error.is_none(), "{:?}", out.error);
+}
+
+#[tokio::test]
+async fn a_large_query_is_paged_through_a_cursor() {
+    let url = database!();
+    let (session, _) = connect(&url).await;
+    let paging = db::Paging {
+        cursor: Some("pgpeck_test_paged".to_string()),
+        stale: None,
+    };
+    let out = db::run(
+        &session,
+        "select g as n, g * 2 as double from generate_series(1, 250) g",
+        100,
+        &paging,
+    )
+    .await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+    let set = &out.sets[0];
+    assert_eq!(set.columns, ["n", "double"]);
+    assert_eq!((set.rows.len(), set.total_rows, set.offset), (100, 250, 0));
+    assert!(set.is_paged() && !set.truncated());
+    assert_eq!(set.rows[0][0].as_deref(), Some("1"));
+    assert_eq!(set.tag, "SELECT 250");
+    let cursor = set.cursor.clone().expect("cursor");
+
+    // Any window can be read, in any order, and the end is short.
+    let (_, rows) = db::fetch_page(&session, &cursor, 200, 100)
+        .await
+        .expect("last window");
+    assert_eq!(rows.len(), 50);
+    assert_eq!(rows[0][0].as_deref(), Some("201"));
+    assert_eq!(rows[49][1].as_deref(), Some("500"));
+    let (_, rows) = db::fetch_page(&session, &cursor, 100, 100)
+        .await
+        .expect("middle window");
+    assert_eq!(rows[0][0].as_deref(), Some("101"));
+    let (_, rows) = db::fetch_page(&session, &cursor, 0, 100)
+        .await
+        .expect("first window");
+    assert_eq!(rows[0][0].as_deref(), Some("1"));
+
+    // The next run closes the old cursor, which then cannot be read.
+    let next = db::Paging {
+        cursor: Some("pgpeck_test_paged_2".to_string()),
+        stale: Some(cursor.clone()),
+    };
+    let out = db::run(&session, "select 1", 100, &next).await;
+    assert!(out.error.is_none());
+    assert!(db::fetch_page(&session, &cursor, 0, 10).await.is_err());
+}
+
+#[tokio::test]
+async fn small_results_and_other_statements_are_not_paged() {
+    let url = database!();
+    let (session, _) = connect(&url).await;
+    let paging = db::Paging {
+        cursor: Some("pgpeck_test_small".to_string()),
+        stale: None,
+    };
+    // Fits in one window: no cursor is kept.
+    let out = db::run(
+        &session,
+        "select g from generate_series(1, 5) g",
+        100,
+        &paging,
+    )
+    .await;
+    let set = &out.sets[0];
+    assert_eq!((set.rows.len(), set.total_rows), (5, 5));
+    assert!(!set.is_paged());
+    // An empty result still has its columns.
+    let out = db::run(&session, "select 1 as a where false", 100, &paging).await;
+    assert_eq!(out.sets[0].columns, ["a"]);
+    // Several statements, and anything that changes data, run as before.
+    let out = db::run(&session, "select 1; select 2", 100, &paging).await;
+    assert_eq!(out.sets.len(), 2);
+    let out = db::run(
+        &session,
+        "select g into temp pgpeck_tmp from generate_series(1, 300) g",
+        100,
+        &paging,
+    )
+    .await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+    // A bad query reports its own error, not one about cursors.
+    let out = db::run(&session, "select * from no_such_table_here", 100, &paging).await;
+    let message = out.error.expect("error").message;
+    assert!(message.contains("no_such_table_here"), "{message}");
+    // Too long for the window, and not pageable: the old behaviour.
+    let out = db::run(
+        &session,
+        "select g from generate_series(1, 300) g; select 1",
+        100,
+        &paging,
+    )
+    .await;
+    assert!(out.sets[0].truncated() && !out.sets[0].is_paged());
 }

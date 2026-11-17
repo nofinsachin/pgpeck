@@ -1,7 +1,7 @@
 //! Work the application asks the runtime to do. `App::update` stays pure: it
 //! returns commands instead of performing I/O (steering: `app` must not do I/O).
 
-use crate::db::ConnId;
+use crate::db::{ConnId, Paging};
 use crate::profile::Profile;
 use crate::secrets::Secret;
 
@@ -22,6 +22,16 @@ pub enum Command {
         conn: ConnId,
         doc: DocId,
         sql: String,
+        /// Whether, and under which name, the result may be paged.
+        paging: Paging,
+    },
+    /// Read another window of rows from a paged result.
+    FetchPage {
+        conn: ConnId,
+        doc: DocId,
+        cursor: String,
+        start: u64,
+        count: usize,
     },
     /// Read the per-database statistics for the session pane.
     Stats {

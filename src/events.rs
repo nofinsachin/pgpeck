@@ -50,6 +50,14 @@ pub enum Background {
         doc: DocId,
         output: QueryOutput,
     },
+    /// A window of rows of a paged result.
+    PageLoaded {
+        conn: ConnId,
+        doc: DocId,
+        cursor: String,
+        start: u64,
+        result: Result<Vec<Vec<Option<String>>>, DbError>,
+    },
     Stats {
         conn: ConnId,
         result: Result<SessionStats, DbError>,

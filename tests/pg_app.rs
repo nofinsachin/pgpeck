@@ -60,6 +60,7 @@ impl Harness {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut config = Config::default();
         config.connections.password_sources = sources.clone();
+        config.results.row_limit = row_limit;
         let runtime = Runtime::new(tx, sources, row_limit, profiles_path);
         let mut app = App::new(config, Keymap::default_keymap());
         let commands = app.update(Event::Resize(WIDTH, HEIGHT));
@@ -260,9 +261,10 @@ async fn an_error_shows_its_code_message_and_position() {
 }
 
 #[tokio::test]
-async fn the_row_limit_is_announced() {
+async fn the_row_limit_is_announced_when_paging_is_off() {
     let url = database!();
     let mut h = Harness::with(vec![Source::Env, Source::Prompt], 50, None);
+    h.app.config.results.paged = false;
     h.connect_with_uri(&url).await;
     h.run("select g from generate_series(1, 200) g").await;
     assert!(
@@ -433,7 +435,13 @@ async fn a_dropped_connection_is_reported_and_reconnect_works() {
     let (other, _) = pgpeck::db::connect(&uri.profile, &user, uri.password.as_ref(), |_| {})
         .await
         .expect("second connection");
-    let kill = pgpeck::db::run(&other, &format!("select pg_terminate_backend({pid})"), 1).await;
+    let kill = pgpeck::db::run(
+        &other,
+        &format!("select pg_terminate_backend({pid})"),
+        1,
+        &Default::default(),
+    )
+    .await;
     assert!(kill.error.is_none());
 
     h.until("the loss to be noticed", |a| {
@@ -702,4 +710,66 @@ async fn a_delete_without_where_waits_for_a_yes() {
                 .is_some_and(|r| r.output.sets.iter().any(|s| s.tag == "DELETE 0"))
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_long_result_is_browsed_window_by_window() {
+    let url = database!();
+    let mut h = Harness::with(vec![Source::Env, Source::Prompt], 50, None);
+    h.connect_with_uri(&url).await;
+    h.run("select g as n from generate_series(1, 200) g").await;
+    let screen = h.screen();
+    assert!(screen.contains("rows 1–"), "{screen}");
+    assert!(screen.contains("of 200"), "{screen}");
+
+    // End jumps to the true last row, which is outside the first window.
+    h.key(KeyCode::Char('3'), KeyModifiers::ALT);
+    h.key(KeyCode::End, KeyModifiers::NONE);
+    h.until("the last window", |a| {
+        a.state
+            .doc()
+            .results
+            .as_ref()
+            .is_some_and(|r| r.loading.is_none() && r.output.sets[0].offset == 150)
+    })
+    .await;
+    let screen = h.screen();
+    assert!(screen.contains("200"), "{screen}");
+    assert!(screen.contains("of 200"), "{screen}");
+
+    // Home goes back to the first row.
+    h.key(KeyCode::Home, KeyModifiers::NONE);
+    h.until("the first window", |a| {
+        a.state
+            .doc()
+            .results
+            .as_ref()
+            .is_some_and(|r| r.loading.is_none() && r.output.sets[0].offset == 0)
+    })
+    .await;
+    assert!(h.screen().contains("rows 1–"), "{}", h.screen());
+
+    // Page Down far enough crosses into the next window by itself.
+    for _ in 0..8 {
+        h.key(KeyCode::PageDown, KeyModifiers::NONE);
+        h.until("the window to settle", |a| {
+            a.state
+                .doc()
+                .results
+                .as_ref()
+                .is_some_and(|r| r.loading.is_none())
+        })
+        .await;
+    }
+    let offset = h
+        .app
+        .state
+        .doc()
+        .results
+        .as_ref()
+        .expect("results")
+        .output
+        .sets[0]
+        .offset;
+    assert!(offset > 0, "paging down must load a later window");
 }

@@ -46,6 +46,12 @@ password_sources = ["prompt"]
 refresh_seconds = 10
 
 [results]
-# Rows kept in memory per result. Further rows are counted but not stored, and
-# the results header says so. Range 1 to 1000000.
+# Rows kept in memory per result. A single SELECT, WITH, VALUES or TABLE query
+# is paged: this many rows are shown at a time, and scrolling past the edge
+# loads the next window from the server. Anything else keeps only this many
+# rows, counts the rest, and the results line says so. Range 1 to 1000000.
 row_limit = 10000
+# Page a single read-only query through a server-side cursor. The server keeps
+# the whole result in temporary storage until the next run in the same buffer.
+# Set to false to keep only the first `row_limit` rows instead.
+paged = true

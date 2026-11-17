@@ -9,7 +9,7 @@ use crate::catalog::{Catalog, Object as CatalogObject};
 use crate::command::{Command, DocId};
 use crate::complete::{self, Candidate, KeywordSource};
 use crate::config::Config;
-use crate::db::{ConnId, ConnectionInfo, SessionStats, TxState};
+use crate::db::{ConnId, ConnectionInfo, Paging, SessionStats, TxState};
 use crate::editor::{display_col, Buffer, EditCmd, Motion, Pos};
 use crate::events::{Background, Event};
 use crate::form::{ConnectForm, SessionForm};
@@ -17,7 +17,7 @@ use crate::keymap::{Action, KeyChord, Keymap, Scope};
 use crate::layout;
 use crate::picker::{self, Picker};
 use crate::profile::{self, Profile, Profiles};
-use crate::results::Results;
+use crate::results::{PageRequest, Results};
 use crate::secrets::{Secret, Source};
 use crate::sql;
 
@@ -58,6 +58,8 @@ pub struct State {
     pub show_results: bool,
     /// The trends pane, drawn only when the terminal is wide enough.
     pub show_trends: bool,
+    /// Counts runs, to give each paged result its own cursor name.
+    pub cursor_seq: u64,
     pub help_open: bool,
     /// First visible line of the help overlay.
     pub help_scroll: usize,
@@ -282,6 +284,7 @@ impl State {
             show_context: config.ui.show_context_strip,
             show_results: true,
             show_trends: true,
+            cursor_seq: 0,
             help_open: false,
             help_scroll: 0,
             quit: false,
@@ -780,15 +783,16 @@ impl App {
             Action::ResultsPageUp => self.scroll_results(-1, true),
             Action::ResultsPageDown => self.scroll_results(1, true),
             Action::ResultsFirstRow => {
-                if let Some(r) = self.results_mut() {
-                    r.first_row();
-                }
+                let limit = self.config.results.row_limit;
+                let request = self.results_mut().and_then(|r| r.first_row_paged(limit));
+                self.fetch_page(request);
             }
             Action::ResultsLastRow => {
-                let page = self.results_page_rows();
-                if let Some(r) = self.results_mut() {
-                    r.last_row(page);
-                }
+                let (page, limit) = (self.results_page_rows(), self.config.results.row_limit);
+                let request = self
+                    .results_mut()
+                    .and_then(|r| r.last_row_paged(page, limit));
+                self.fetch_page(request);
             }
             Action::ResultsLeft => {
                 if let Some(r) = self.results_mut() {
@@ -1517,6 +1521,34 @@ impl App {
                     }
                 }
             }
+            Background::PageLoaded {
+                conn: _,
+                doc,
+                cursor,
+                start,
+                result,
+            } => {
+                let page = self.results_page_rows();
+                let mut failure = None;
+                if let Some(d) = self.state.docs.iter_mut().find(|d| d.id == doc) {
+                    if let Some(r) = d.results.as_mut() {
+                        match result {
+                            Ok(rows) => {
+                                r.apply_page(&cursor, start, rows, page);
+                            }
+                            Err(e) => {
+                                r.page_failed();
+                                failure = Some(e.message);
+                            }
+                        }
+                    }
+                }
+                if let Some(message) = failure {
+                    self.notice(format!(
+                        "Could not read more rows: {message}. Run the query again"
+                    ));
+                }
+            }
             Background::Stats { conn, result } => {
                 if let Some(c) = self.state.connection_mut(conn) {
                     c.stats_busy = false;
@@ -1613,7 +1645,30 @@ impl App {
             started: Instant::now(),
         });
         self.state.completion = None;
-        self.pending.push(Command::Run { conn, doc, sql });
+        // A single read-only query is paged through a cursor of its own. The
+        // cursor of the result being replaced is closed.
+        let paging = if self.config.results.paged {
+            self.state.cursor_seq += 1;
+            let stale = self
+                .state
+                .docs
+                .iter()
+                .find(|d| d.id == doc)
+                .and_then(|d| d.results.as_ref())
+                .and_then(|r| r.output.sets.iter().find_map(|s| s.cursor.clone()));
+            Paging {
+                cursor: Some(format!("pgpeck_c{}", self.state.cursor_seq)),
+                stale,
+            }
+        } else {
+            Paging::default()
+        };
+        self.pending.push(Command::Run {
+            conn,
+            doc,
+            sql,
+            paging,
+        });
     }
 
     /// Only `y` or `yes` confirms. Enter alone never does (R15.5).
@@ -1694,8 +1749,31 @@ impl App {
     fn scroll_results(&mut self, direction: isize, page: bool) {
         let rows = self.results_page_rows();
         let step = if page { rows as isize } else { 1 };
-        if let Some(results) = self.results_mut() {
-            results.scroll_rows(direction * step, rows);
+        let limit = self.config.results.row_limit;
+        let request = self
+            .results_mut()
+            .and_then(|r| r.scroll_rows_paged(direction * step, rows, limit));
+        self.fetch_page(request);
+    }
+
+    /// Asks the runtime for a window of a paged result.
+    fn fetch_page(&mut self, request: Option<PageRequest>) {
+        let Some(request) = request else { return };
+        let doc = self.state.doc();
+        let (doc, conn) = (doc.id, doc.connection);
+        match conn {
+            Some(conn) => self.pending.push(Command::FetchPage {
+                conn,
+                doc,
+                cursor: request.cursor,
+                start: request.start,
+                count: request.count,
+            }),
+            None => {
+                if let Some(r) = self.results_mut() {
+                    r.page_failed();
+                }
+            }
         }
     }
 
@@ -2488,6 +2566,8 @@ mod tests {
                 .collect(),
             total_rows: rows.len() as u64,
             tag: format!("SELECT {}", rows.len()),
+            offset: 0,
+            cursor: None,
         }
     }
 

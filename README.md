@@ -8,7 +8,7 @@ A fast, keyboard-driven terminal client for PostgreSQL, written in Rust.
 
 Early development. You can connect, write and run SQL, read results, and find schema objects by
 name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refuse `prefer`),
-paged result browsing, the relationship view and query history.
+the relationship view and query history.
 
 ## What it does
 
@@ -18,6 +18,9 @@ paged result browsing, the relationship view and query history.
   `Ctrl+R` runs the statement under the cursor, or the selection.
 - **Read results** in a grid with a header, column separators and row banding. A summary line
   (rows and time) sits under the results.
+- **Browse long results.** A single `SELECT`, `WITH`, `VALUES` or `TABLE` query is paged: scroll
+  past the edge of the loaded rows, or press `Home` or `End`, and pgpeck reads that part of the
+  result from the server.
 - **Find** tables, views, columns, functions, types and schemas by name with `Ctrl+P`.
 - **Stay safe.** Risky statements wait for a typed `y` or `yes`. The session strip and the status
   bar flag open and failed transactions.
@@ -124,6 +127,20 @@ Before a risky statement runs, pgpeck shows it with the connection name and wait
 - `DROP` and `TRUNCATE`.
 
 The session strip and the status bar show an open or failed transaction.
+
+## Long results
+
+A single read-only query (`SELECT`, `WITH`, `VALUES` or `TABLE`) is read through a server-side
+cursor, so memory stays bounded and you can still reach every row. `results.row_limit` (default
+10,000) is the size of the window held in memory. The line under the results shows
+`rows 1–20 of 45310`. Scrolling to the edge of the window loads the next or previous one, and
+`Home` and `End` jump to the first and last row of the whole result.
+
+The server keeps the whole result in temporary storage until the next run in the same buffer,
+which closes it. Set `results.paged = false` to keep only the first `row_limit` rows instead. Several
+statements together, and anything that changes data, are not paged and keep only the first
+`row_limit` rows. If you roll back a transaction that ran the query, its result can no longer be
+paged, and pgpeck asks you to run it again.
 
 ## Trends
 

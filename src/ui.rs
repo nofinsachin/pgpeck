@@ -703,8 +703,16 @@ fn draw_results(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
             ),
             Style::new().add_modifier(Modifier::BOLD),
         )
+    } else if results.is_some_and(|r| r.loading.is_some()) {
+        Line::styled("Loading rows…", dim)
     } else if let Some(r) = results {
-        summary_line(r.current(), r.output.elapsed, theme)
+        let first = r.row;
+        summary_line(
+            r.current(),
+            r.output.elapsed,
+            theme,
+            (first, usize::from(body.rows.height)),
+        )
     } else {
         Line::styled(
             format!(
@@ -754,11 +762,22 @@ fn draw_results(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
     }
 }
 
-fn summary_line<'a>(tab: Option<Tab<'_>>, elapsed: std::time::Duration, theme: &Theme) -> Line<'a> {
+/// The line under the results. `view` is the first visible row (counted in the
+/// loaded window) and how many rows fit, for the range of a paged result.
+fn summary_line<'a>(
+    tab: Option<Tab<'_>>,
+    elapsed: std::time::Duration,
+    theme: &Theme,
+    view: (usize, usize),
+) -> Line<'a> {
     let took = format_elapsed(elapsed);
     match tab {
         Some(Tab::Set(set)) if set.returns_rows() => {
-            let rows = if set.truncated() {
+            let rows = if set.is_paged() {
+                let first = set.offset + view.0 as u64 + 1;
+                let last = (first + view.1.saturating_sub(1) as u64).min(set.total_rows);
+                format!("rows {first}–{last} of {}", set.total_rows)
+            } else if set.truncated() {
                 format!(
                     "showing the first {} of {} rows (row limit)",
                     set.rows.len(),
@@ -2899,6 +2918,8 @@ mod tests {
             ],
             total_rows: 2,
             tag: "SELECT 2".to_string(),
+            offset: 0,
+            cursor: None,
         };
         a.update(Event::Background(
             crate::events::Background::QueryFinished {

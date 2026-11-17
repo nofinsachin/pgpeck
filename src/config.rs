@@ -24,8 +24,12 @@ pub struct SessionConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultsConfig {
-    /// Rows kept per result. More are counted but not stored (R12.9, PRF-005).
+    /// Rows kept in memory per result, or per window of a paged result
+    /// (R12.9, PRF-005).
     pub row_limit: usize,
+    /// Page a single read-only query through a server-side cursor, so rows
+    /// beyond `row_limit` can be browsed.
+    pub paged: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +76,10 @@ impl Default for Config {
                 completion: true,
                 completion_min_chars: 2,
             },
-            results: ResultsConfig { row_limit: 10_000 },
+            results: ResultsConfig {
+                row_limit: 10_000,
+                paged: true,
+            },
             session: SessionConfig {
                 refresh_seconds: 10,
             },
@@ -103,7 +110,7 @@ const SCHEMA: &[(&str, &[&str])] = &[
     ),
     ("ui", &["theme", "show_hint_bar", "show_context_strip"]),
     ("connections", &["password_sources"]),
-    ("results", &["row_limit"]),
+    ("results", &["row_limit", "paged"]),
     ("session", &["refresh_seconds"]),
 ];
 
@@ -186,6 +193,7 @@ impl Config {
             }
             ("ui", "show_hint_bar") => self.ui.show_hint_bar = want_bool(value)?,
             ("ui", "show_context_strip") => self.ui.show_context_strip = want_bool(value)?,
+            ("results", "paged") => self.results.paged = want_bool(value)?,
             ("results", "row_limit") => {
                 self.results.row_limit = value
                     .as_integer()

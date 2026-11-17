@@ -387,6 +387,36 @@ impl Statement {
 /// it sits in a string, quoted name, comment or dollar-quoted body, or in the
 /// body of a `CREATE FUNCTION ... BEGIN ATOMIC ... END`. Segments that hold
 /// only comments are not statements.
+/// True for a single read-only query that a cursor can page through: it starts
+/// with `SELECT`, `WITH`, `VALUES` or `TABLE`, and has no `INTO` or data
+/// changing command in it (a cursor refuses those). Only keywords outside
+/// strings, names and comments count.
+pub fn is_pageable_query(src: &str) -> bool {
+    let mut first = true;
+    for token in lex(src) {
+        match token.kind {
+            TokenKind::Whitespace | TokenKind::Comment => continue,
+            TokenKind::Keyword | TokenKind::Identifier => {
+                let word = src[token.start..token.end].to_ascii_uppercase();
+                if first {
+                    if !matches!(word.as_str(), "SELECT" | "WITH" | "VALUES" | "TABLE") {
+                        return false;
+                    }
+                    first = false;
+                } else if matches!(
+                    word.as_str(),
+                    "INTO" | "INSERT" | "UPDATE" | "DELETE" | "MERGE"
+                ) {
+                    return false;
+                }
+            }
+            _ if first => return false,
+            _ => {}
+        }
+    }
+    !first
+}
+
 pub fn statements(src: &str) -> Vec<Statement> {
     let mut found = Vec::new();
     let mut start: Option<usize> = None;
@@ -946,5 +976,32 @@ mod assessment_tests {
         assert_eq!(a("drop table t"), (true, false, true));
         assert_eq!(a("TRUNCATE t"), (true, false, true));
         assert_eq!(a("select 1; drop view v"), (true, false, true));
+    }
+
+    #[test]
+    fn only_a_single_read_only_query_can_be_paged() {
+        for yes in [
+            "select 1",
+            "  SELECT * from t where a = 'insert'",
+            "-- note\nwith x as (select 1) select * from x",
+            "values (1), (2)",
+            "table users",
+            "select \"update\" from t",
+            "select 1 /* delete */",
+        ] {
+            assert!(is_pageable_query(yes), "{yes}");
+        }
+        for no in [
+            "insert into t values (1)",
+            "update t set a = 1",
+            "select * into copy from t",
+            "with d as (delete from t returning *) select * from d",
+            "create table t (a int)",
+            "explain select 1",
+            "",
+            "-- only a comment",
+        ] {
+            assert!(!is_pageable_query(no), "{no}");
+        }
     }
 }

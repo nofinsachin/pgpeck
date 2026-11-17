@@ -71,10 +71,15 @@ impl Runtime {
             } => {
                 tokio::spawn(async move { this.connect(conn, *profile, password, lookup).await });
             }
-            Command::Run { conn, doc, sql } => {
+            Command::Run {
+                conn,
+                doc,
+                sql,
+                paging,
+            } => {
                 tokio::spawn(async move {
                     let output = match this.session(conn) {
-                        Some(session) => db::run(&session, &sql, this.row_limit).await,
+                        Some(session) => db::run(&session, &sql, this.row_limit, &paging).await,
                         None => db::QueryOutput {
                             sets: Vec::new(),
                             error: Some(db::DbError::new(
@@ -85,6 +90,29 @@ impl Runtime {
                         },
                     };
                     this.send(Background::QueryFinished { conn, doc, output });
+                });
+            }
+            Command::FetchPage {
+                conn,
+                doc,
+                cursor,
+                start,
+                count,
+            } => {
+                tokio::spawn(async move {
+                    let result = match this.session(conn) {
+                        Some(session) => db::fetch_page(&session, &cursor, start, count)
+                            .await
+                            .map(|(_, rows)| rows),
+                        None => Err(db::DbError::new("the connection is closed")),
+                    };
+                    this.send(Background::PageLoaded {
+                        conn,
+                        doc,
+                        cursor,
+                        start,
+                        result,
+                    });
                 });
             }
             Command::Stats { conn } => {

@@ -232,6 +232,12 @@ pub struct ResultSet {
     pub total_rows: u64,
     /// Command tag, for example `INSERT 0 5`.
     pub tag: String,
+    /// Position of `rows[0]` in the whole result. Always 0 unless the result is
+    /// paged.
+    pub offset: u64,
+    /// The server-side cursor that holds a paged result. Further windows of
+    /// rows are read from it.
+    pub cursor: Option<String>,
 }
 
 impl ResultSet {
@@ -239,8 +245,14 @@ impl ResultSet {
         !self.columns.is_empty()
     }
 
+    /// Rows were dropped and cannot be read back. A paged result is not
+    /// truncated: the rest is on the server.
     pub fn truncated(&self) -> bool {
-        self.total_rows > self.rows.len() as u64
+        self.cursor.is_none() && self.total_rows > self.rows.len() as u64
+    }
+
+    pub fn is_paged(&self) -> bool {
+        self.cursor.is_some()
     }
 }
 
@@ -466,13 +478,152 @@ pub struct QueryOutput {
     pub tx: TxState,
 }
 
+/// How a run may page its result.
+#[derive(Debug, Clone, Default)]
+pub struct Paging {
+    /// Name for the server-side cursor of this run. `None` turns paging off.
+    pub cursor: Option<String>,
+    /// The cursor of the previous run in the same buffer, closed first.
+    pub stale: Option<String>,
+}
+
+/// Quotes a cursor name, which pgpeck makes up, as an identifier.
+fn cursor_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Reads `count` rows starting at row `start` (0 based) of a paged result.
+pub async fn fetch_page(
+    session: &Session,
+    cursor: &str,
+    start: u64,
+    count: usize,
+) -> Result<(Vec<String>, Vec<Vec<Option<String>>>), DbError> {
+    let name = cursor_ident(cursor);
+    let sql_text = format!("MOVE ABSOLUTE {start} FROM {name}; FETCH FORWARD {count} FROM {name}");
+    let stream = session
+        .client
+        .simple_query_raw(&sql_text)
+        .await
+        .map_err(|e| DbError::from(&e))?;
+    let mut stream = std::pin::pin!(stream);
+    let mut columns = Vec::new();
+    let mut rows = Vec::new();
+    while let Some(message) = stream.next().await {
+        match message.map_err(|e| DbError::from(&e))? {
+            SimpleQueryMessage::RowDescription(c) => {
+                columns = c.iter().map(|c| c.name().to_string()).collect();
+            }
+            SimpleQueryMessage::Row(row) => {
+                if columns.is_empty() {
+                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+                }
+                rows.push((0..row.len()).map(|i| row.get(i).map(clip_cell)).collect());
+            }
+            _ => {}
+        }
+    }
+    Ok((columns, rows))
+}
+
+/// Declares a cursor for one query and reads its first window. A result that
+/// fits in one window keeps no cursor.
+async fn run_paged(
+    session: &Session,
+    cursor: &str,
+    statement: &str,
+    row_limit: usize,
+) -> Result<ResultSet, DbError> {
+    let name = cursor_ident(cursor);
+    // WITH HOLD keeps the cursor after the statement's implicit transaction
+    // ends, so browsing never holds a transaction open.
+    session
+        .client
+        .simple_query(&format!(
+            "DECLARE {name} SCROLL CURSOR WITH HOLD FOR {statement}"
+        ))
+        .await
+        .map_err(|e| DbError::from(&e))?;
+    let counted = session
+        .client
+        .simple_query(&format!("MOVE FORWARD ALL FROM {name}"))
+        .await
+        .map_err(|e| DbError::from(&e))?;
+    let total = counted
+        .iter()
+        .find_map(|m| match m {
+            SimpleQueryMessage::CommandComplete(n) => Some(*n),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let (columns, rows) = fetch_page(session, cursor, 0, row_limit).await?;
+    let paged = total > row_limit as u64;
+    if !paged {
+        // Everything is in memory: the server need not keep it.
+        let _ = session.client.simple_query(&format!("CLOSE {name}")).await;
+    }
+    Ok(ResultSet {
+        columns,
+        rows,
+        total_rows: total,
+        tag: command_tag(Some(statement), total, true),
+        offset: 0,
+        cursor: paged.then(|| cursor.to_string()),
+    })
+}
+
 /// Runs one or more statements. Memory stays bounded: only `row_limit` rows
-/// per result are kept, and the rest are counted and dropped.
-pub async fn run(session: &Session, sql_text: &str, row_limit: usize) -> QueryOutput {
+/// per result are kept. A single read-only query is paged through a
+/// server-side cursor, so the rest can be read on demand. Anything else keeps
+/// the first `row_limit` rows and counts the rest.
+pub async fn run(
+    session: &Session,
+    sql_text: &str,
+    row_limit: usize,
+    paging: &Paging,
+) -> QueryOutput {
     let started = Instant::now();
     let statements = sql::statements(sql_text);
     let mut sets = Vec::new();
     let mut error = None;
+
+    if let Some(stale) = &paging.stale {
+        let _ = session
+            .client
+            .simple_query(&format!("CLOSE {}", cursor_ident(stale)))
+            .await;
+    }
+    if let (Some(cursor), [only]) = (&paging.cursor, &statements[..]) {
+        let text = only.text(sql_text);
+        if sql::is_pageable_query(text) {
+            match run_paged(session, cursor, text, row_limit).await {
+                Ok(set) => {
+                    return QueryOutput {
+                        sets: vec![set],
+                        error: None,
+                        elapsed: started.elapsed(),
+                        tx: transaction_state(session).await,
+                    };
+                }
+                // A cancelled query stays cancelled. Any other refusal falls
+                // through to the plain run, which reports the real error.
+                Err(e) if e.is_cancellation() => {
+                    return QueryOutput {
+                        sets,
+                        error: Some(e),
+                        elapsed: started.elapsed(),
+                        tx: transaction_state(session).await,
+                    };
+                }
+                Err(_) => {
+                    let _ = session
+                        .client
+                        .simple_query(&format!("CLOSE {}", cursor_ident(cursor)))
+                        .await;
+                }
+            }
+        }
+    }
 
     match session.client.simple_query_raw(sql_text).await {
         Err(e) => error = Some(DbError::from(&e)),
@@ -487,6 +638,8 @@ pub async fn run(session: &Session, sql_text: &str, row_limit: usize) -> QueryOu
                             rows: Vec::new(),
                             total_rows: 0,
                             tag: String::new(),
+                            offset: 0,
+                            cursor: None,
                         });
                     }
                     Ok(SimpleQueryMessage::Row(row)) => {
@@ -495,6 +648,8 @@ pub async fn run(session: &Session, sql_text: &str, row_limit: usize) -> QueryOu
                             rows: Vec::new(),
                             total_rows: 0,
                             tag: String::new(),
+                            offset: 0,
+                            cursor: None,
                         });
                         set.total_rows += 1;
                         if set.rows.len() < row_limit {
@@ -508,6 +663,8 @@ pub async fn run(session: &Session, sql_text: &str, row_limit: usize) -> QueryOu
                             rows: Vec::new(),
                             total_rows: 0,
                             tag: String::new(),
+                            offset: 0,
+                            cursor: None,
                         });
                         let statement = statements.get(sets.len()).map(|s| s.text(sql_text));
                         set.tag = command_tag(statement, count, set.returns_rows());
