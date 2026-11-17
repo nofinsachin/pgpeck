@@ -301,16 +301,17 @@ impl State {
         }
     }
 
-    /// Panes in the order focus cycles through them (top to bottom).
+    /// Panes in the order focus cycles through them: the left column from
+    /// top to bottom, then the right column.
     pub fn visible_panes(&self) -> Vec<Pane> {
         let mut panes = Vec::new();
-        if self.show_context {
-            panes.push(Pane::Context);
-            panes.push(Pane::Session);
-        }
-        panes.push(Pane::Editor);
         if self.show_results {
             panes.push(Pane::Results);
+        }
+        panes.push(Pane::Editor);
+        if self.show_context {
+            panes.push(Pane::Session);
+            panes.push(Pane::Context);
         }
         panes
     }
@@ -1767,7 +1768,7 @@ mod tests {
         assert_eq!(a.state.focus, Pane::Editor);
         assert_eq!(a.state.editor().text(), "    ");
         press(&mut a, KeyCode::F(6), KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Results, "F6 always leaves the editor");
+        assert_eq!(a.state.focus, Pane::Session, "F6 always leaves the editor");
     }
 
     #[test]
@@ -1775,17 +1776,18 @@ mod tests {
         let mut config = Config::default();
         config.editor.tab_indent = false;
         let mut a = app_with(config);
-        // Panes run left to right, then down: Context, Session, Editor, Results.
+        // The left column runs top to bottom, then the right column:
+        // Results, Editor, Session, Context.
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Results);
+        assert_eq!(a.state.focus, Pane::Session);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Context);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Session);
+        assert_eq!(a.state.focus, Pane::Results);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Editor);
         press(&mut a, KeyCode::BackTab, KeyModifiers::SHIFT);
-        assert_eq!(a.state.focus, Pane::Session);
+        assert_eq!(a.state.focus, Pane::Results);
     }
 
     #[test]
@@ -1793,7 +1795,7 @@ mod tests {
         let mut a = app();
         alt(&mut a, '1');
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Session);
+        assert_eq!(a.state.focus, Pane::Results);
         alt(&mut a, '4');
         assert_eq!(a.state.focus, Pane::Session);
     }

@@ -22,4 +22,3 @@ line_number = "#7a6650"
 cursor_line_bg = "#3a2c20" # brown
 background = "#000000"     # pitch dark
 border = "#9c7a4d"         # tan lines between result columns
-bird = "#b0753f"           # the oxpecker in the corner

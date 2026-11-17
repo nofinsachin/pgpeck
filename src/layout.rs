@@ -10,35 +10,31 @@ use crate::config::Config;
 /// requirements. Below it, one pane is shown at a time (R20.5).
 pub const MIN_SIZE: (u16, u16) = (60, 15);
 
-/// Width below which the context strip collapses to a single line (R10.7).
-const NARROW_WIDTH: u16 = 80;
+/// The right column holds the session, the context and the trends, top to
+/// bottom. It takes this share of the width, within these limits.
+const SIDE_SHARE: u16 = 34;
+const SIDE_MIN_WIDTH: u16 = 36;
+const SIDE_MAX_WIDTH: u16 = 50;
 
-/// Height of the context and session panes, borders included: five lines of text.
-const CONTEXT_HEIGHT: u16 = 7;
+/// Heights in the right column, borders included. The context pane holds the
+/// welcome text before you connect, which is three lines.
+const CONTEXT_HEIGHT: u16 = 5;
+const TRENDS_HEIGHT: u16 = 7;
+const SESSION_MIN_HEIGHT: u16 = 7;
 
-/// The least the context pane keeps, and the least the session pane keeps.
-const CONTEXT_MIN_WIDTH: u16 = 36;
-const SESSION_MIN_WIDTH: u16 = 28;
-
-/// The trends pane needs room beside the other two. Below this width it is
-/// not drawn.
-pub const TRENDS_MIN_WIDTH: u16 = 140;
-const TRENDS_WIDTH: u16 = 44;
-
-/// The art needs the room beside the context. Below this width it is not drawn.
-pub const ART_MIN_WIDTH: u16 = 110;
-pub const ART_WIDTH: u16 = 18;
+/// The editor is a strip at the bottom of the left column: this share of its
+/// height, and never less than `EDITOR_MIN_HEIGHT` (borders included).
+const EDITOR_SHARE: u16 = 28;
+const EDITOR_MIN_HEIGHT: u16 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Areas {
     /// Set when the terminal is below the minimum size.
     pub message: Option<Rect>,
     pub editor: Option<Rect>,
-    /// The oxpecker in the top left corner.
-    pub art: Option<Rect>,
     pub context: Option<Rect>,
     pub session: Option<Rect>,
-    /// Largest tables, shown beside the session pane on wide terminals.
+    /// Largest tables. Left out when the right column is too short.
     pub trends: Option<Rect>,
     pub results: Option<Rect>,
     pub hint: Rect,
@@ -57,7 +53,6 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     let mut areas = Areas {
         message: None,
         editor: None,
-        art: None,
         context: None,
         session: None,
         trends: None,
@@ -79,55 +74,52 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         return areas;
     }
 
-    let context_height = match (state.show_context, body.width < NARROW_WIDTH) {
-        (false, _) => 0,
-        (true, true) => 5,
-        (true, false) => CONTEXT_HEIGHT,
-    };
-    let results = if state.show_results {
-        Constraint::Percentage(40)
+    // Left: what came back above, what you write below. Right: where you are.
+    let (left, side) = if state.show_context {
+        let side_width = (body.width * SIDE_SHARE / 100).clamp(SIDE_MIN_WIDTH, SIDE_MAX_WIDTH);
+        let [left, side] =
+            Split::horizontal([Constraint::Min(1), Constraint::Length(side_width)]).areas(body);
+        (left, Some(side))
     } else {
-        Constraint::Length(0)
+        (body, None)
     };
-    // Top to bottom: where you are, what you write, what came back.
-    let [context, editor, results_area] = Split::vertical([
-        Constraint::Length(context_height),
-        Constraint::Min(3),
-        results,
-    ])
-    .areas(body);
-    if state.show_context {
-        let context = if body.width >= ART_MIN_WIDTH {
-            let [art, rest] =
-                Split::horizontal([Constraint::Length(ART_WIDTH), Constraint::Min(1)])
-                    .areas(context);
-            areas.art = Some(art);
-            rest
-        } else {
-            context
-        };
-        // The session has more to show than the context, so it gets the larger
-        // share. The context keeps enough room for its welcome line.
-        let with_trends = state.show_trends && context.width >= TRENDS_MIN_WIDTH;
-        let (main, trends) = if with_trends {
-            let [main, trends] =
-                Split::horizontal([Constraint::Min(1), Constraint::Length(TRENDS_WIDTH)])
-                    .areas(context);
-            (main, Some(trends))
-        } else {
-            (context, None)
-        };
-        let context_width = (main.width * 2 / 5)
-            .max(CONTEXT_MIN_WIDTH)
-            .min(main.width.saturating_sub(SESSION_MIN_WIDTH));
-        let [left, right] =
-            Split::horizontal([Constraint::Length(context_width), Constraint::Min(1)]).areas(main);
-        areas.context = Some(left);
-        areas.session = Some(right);
-        areas.trends = trends;
+
+    let editor_height = (left.height * EDITOR_SHARE / 100).max(EDITOR_MIN_HEIGHT);
+    if state.show_results {
+        let [results, editor] = Split::vertical([
+            Constraint::Min(3),
+            Constraint::Length(editor_height.min(left.height.saturating_sub(3))),
+        ])
+        .areas(left);
+        areas.results = Some(results);
+        areas.editor = Some(editor);
+    } else {
+        areas.editor = Some(left);
     }
-    areas.editor = Some(editor);
-    areas.results = state.show_results.then_some(results_area);
+
+    if let Some(side) = side {
+        let with_trends =
+            state.show_trends && side.height >= SESSION_MIN_HEIGHT + CONTEXT_HEIGHT + TRENDS_HEIGHT;
+        if with_trends {
+            let [session, context, trends] = Split::vertical([
+                Constraint::Min(SESSION_MIN_HEIGHT),
+                Constraint::Length(CONTEXT_HEIGHT),
+                Constraint::Length(TRENDS_HEIGHT),
+            ])
+            .areas(side);
+            areas.session = Some(session);
+            areas.context = Some(context);
+            areas.trends = Some(trends);
+        } else {
+            let [session, context] = Split::vertical([
+                Constraint::Min(SESSION_MIN_HEIGHT.min(side.height.saturating_sub(CONTEXT_HEIGHT))),
+                Constraint::Length(CONTEXT_HEIGHT.min(side.height)),
+            ])
+            .areas(side);
+            areas.session = Some(session);
+            areas.context = Some(context);
+        }
+    }
     areas
 }
 

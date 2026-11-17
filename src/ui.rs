@@ -3,7 +3,7 @@
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
@@ -40,9 +40,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     }
     if let Some(rect) = areas.editor {
         draw_editor(frame, app, theme, rect);
-    }
-    if let Some(rect) = areas.art {
-        draw_art(frame, theme, rect);
     }
     if let Some(rect) = areas.context {
         draw_context(frame, app, theme, rect);
@@ -201,7 +198,9 @@ fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             ]
         }
     };
-    let body = Paragraph::new(lines).block(pane_block(app, theme, Pane::Context));
+    let body = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .block(pane_block(app, theme, Pane::Context));
     frame.render_widget(body, area);
 }
 
@@ -223,53 +222,15 @@ fn draw_session(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         .key_for(Action::TransactionRollback, &[Scope::Global], |_| true)
         .map_or_else(|| "(unbound)".to_string(), key_label);
     let view = SessionView::new(theme, conn, &rollback_key);
-    if inner.width >= TWO_COLUMNS {
-        let [left, right] = ratatui::layout::Layout::horizontal([
-            ratatui::layout::Constraint::Length(IDENTITY_WIDTH),
-            ratatui::layout::Constraint::Min(1),
-        ])
-        .areas(inner);
-        frame.render_widget(Paragraph::new(view.identity()), left);
-        frame.render_widget(Paragraph::new(view.server()), right);
+    // A tall pane lists everything. A short one keeps what matters most.
+    let lines = if inner.height >= FULL_LIST_HEIGHT {
+        let mut lines = view.identity();
+        lines.extend(view.server());
+        lines
     } else {
-        frame.render_widget(Paragraph::new(view.compact()), inner);
-    }
-}
-
-/// The oxpecker. Each character has a role: the eye and the bill are yellow,
-/// the tip of the bill is red, the branch is tan and the rest is brown.
-const ART: [&str; 6] = [
-    "     ,--.       ",
-    "   .'    '.==>  ",
-    "  /  (o)   |    ",
-    " (   \\___  /    ",
-    "  \\__/  \\_/\\    ",
-    " ~~~~|~|~~~~~   ",
-];
-
-fn draw_art(frame: &mut Frame, theme: &Theme, area: Rect) {
-    let body = Style::new().fg(theme.bird);
-    let mut lines: Vec<Line> = ART
-        .iter()
-        .map(|row| {
-            Line::from(
-                row.chars()
-                    .map(|c| match c {
-                        'o' => Span::styled(
-                            c.to_string(),
-                            Style::new().fg(theme.focus).add_modifier(Modifier::BOLD),
-                        ),
-                        '=' => Span::styled(c.to_string(), Style::new().fg(theme.focus)),
-                        '>' => Span::styled(c.to_string(), Style::new().fg(theme.error)),
-                        '~' => Span::styled(c.to_string(), Style::new().fg(theme.string)),
-                        _ => Span::styled(c.to_string(), body),
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect();
-    lines.push(Line::styled(" pgpeck", body.add_modifier(Modifier::BOLD)));
-    frame.render_widget(Paragraph::new(lines), area);
+        view.compact()
+    };
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 /// The trends pane: the largest tables of the connected database, as bars.
@@ -334,9 +295,8 @@ fn draw_trends(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Inside the session pane, wide enough for identity and server side by side.
-const TWO_COLUMNS: u16 = 70;
-const IDENTITY_WIDTH: u16 = 22;
+/// Inside the session pane, tall enough to list identity and server in full.
+const FULL_LIST_HEIGHT: u16 = 11;
 
 struct SessionView<'a> {
     theme: &'a Theme,
@@ -732,7 +692,7 @@ fn draw_results(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
     } else {
         Line::styled(
             format!(
-                "No results yet. Run a statement with {}.",
+                "No results yet. Run with {}.",
                 global_key(app, Action::QueryRun)
             ),
             dim,
@@ -2112,11 +2072,16 @@ mod tests {
     }
 
     /// Screen row of the editor's top border. The context row above it is 7 rows.
-    const EDITOR_TOP: u16 = 7;
+    /// The screen row of the editor's top border at 80x24.
+    fn editor_top() -> u16 {
+        let a = app(80, 24);
+        let areas = layout::compute(Rect::new(0, 0, 80, 24), &a.state, &a.config);
+        areas.editor.expect("editor").y
+    }
 
     /// The style at a position inside the editor text (row 0 is its first line).
     fn editor_style(app: &App, width: u16, height: u16, x: u16, row: u16) -> Style {
-        cell_style(app, width, height, x, EDITOR_TOP + 1 + row)
+        cell_style(app, width, height, x, editor_top() + 1 + row)
     }
 
     const SAMPLE: &str =
@@ -2132,18 +2097,22 @@ mod tests {
             "┌ ▶ Context",
             "Session",
             "Not connected",
-            "No results yet. Run a statement with Ctrl+R.",
+            "No results yet. Run with Ctrl+R.",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
-        // The panes run top to bottom: where you are, what you write, the results.
-        let at = |title: &str| out.find(title).unwrap_or_else(|| panic!("no {title}"));
-        assert!(
-            at("Context") < at("Session")
-                && at("Session") < at("Editor")
-                && at("Editor") < at("Results"),
-            "{out}"
-        );
+        // The left column runs results above the editor. The right column runs
+        // session above context, to the right of the left column.
+        let at = |title: &str| {
+            out.lines()
+                .enumerate()
+                .find_map(|(row, l)| l.find(title).map(|col| (row, l[..col].chars().count())))
+                .unwrap_or_else(|| panic!("no {title}"))
+        };
+        let (results, editor) = (at("Results"), at("Editor"));
+        let (session, context) = (at("Session"), at("Context"));
+        assert!(results.0 < editor.0 && session.0 < context.0, "{out}");
+        assert!(session.1 > results.1 && context.1 > editor.1, "{out}");
         assert_snapshot("landing_80x24", &out);
     }
 
@@ -2318,7 +2287,7 @@ mod tests {
         a.state.connection_mut_for_tests(conn).tx = crate::db::TxState::Failed;
         let out = render(&a, 90, 24);
         assert!(
-            out.contains("Transaction FAILED. Alt+Z rolls back"),
+            out.contains("Transaction FAILED.") && out.contains("Alt+Z rolls"),
             "{out}"
         );
         assert!(out.contains("TX FAILED"), "{out}");
@@ -2349,30 +2318,22 @@ mod tests {
         a
     }
 
-    /// Wide enough for the session's two columns: the art takes room from
-    /// the top row, so the trends pane is turned off.
-    fn roomy_session_app(stats: SessionStats) -> App {
-        let mut a = with_stats(150, 24, stats);
-        a.state.show_trends = false;
-        a
-    }
-
     #[test]
-    fn a_wide_session_pane_has_identity_on_the_left_and_the_server_on_the_right() {
-        let a = roomy_session_app(sample_stats());
-        let out = render(&a, 150, 24);
+    fn a_tall_session_pane_lists_the_identity_and_the_server_numbers() {
+        let a = with_stats(160, 40, sample_stats());
+        let out = render(&a, 160, 40);
         for expected in [
             "Database    app",
             "User        alice",
             "127.0.0.1:5432  PostgreSQL 16.2",
-            "Connections 3 here · 12 of 100 on server",
-            "Activity    1 active · 0 idle in transaction",
+            "Connections 3 here · 12 of 100",
+            "Activity    1 active · 0 idle in",
             "Size        1.2 GB · cache hit 99.2%",
-            "Health      oldest tx 12s · up 3d 4h · deadlocks 0",
+            "Health      oldest tx 12s",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
-        assert_snapshot("session_wide_150x24", &out);
+        assert_snapshot("session_tall_160x40", &out);
     }
 
     #[test]
@@ -2381,7 +2342,7 @@ mod tests {
         let out = render(&a, 90, 24);
         for expected in [
             "app · alice",
-            "Conns 3 here · 12/100 on server",
+            "Conns 3 here · 12/100",
             "1.2 GB · cache hit 99.2%",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
@@ -2390,15 +2351,40 @@ mod tests {
     }
 
     #[test]
-    fn the_session_pane_is_wider_than_the_context_pane() {
-        for width in [80u16, 90, 120, 160] {
-            let a = connected_app(width, 24);
-            let areas = layout::compute(Rect::new(0, 0, width, 24), &a.state, &a.config);
-            let (c, s) = (areas.context.expect("c"), areas.session.expect("s"));
-            assert!(s.width > c.width, "{width}: {c:?} {s:?}");
-            let others = areas.trends.map_or(0, |t| t.width) + areas.art.map_or(0, |t| t.width);
-            assert_eq!(c.width + s.width + others, width);
+    fn results_sit_above_a_short_editor_and_the_right_column_stacks_top_to_bottom() {
+        for (width, height) in [(80u16, 24u16), (120, 30), (160, 40)] {
+            let a = connected_app(width, height);
+            let areas = layout::compute(Rect::new(0, 0, width, height), &a.state, &a.config);
+            let (results, editor) = (areas.results.expect("r"), areas.editor.expect("e"));
+            assert_eq!(results.bottom(), editor.y, "{width}x{height}");
+            assert!(editor.height < results.height, "{width}x{height}");
+            assert_eq!(results.x, editor.x);
+            assert_eq!(results.width, editor.width);
+
+            let (session, context) = (areas.session.expect("s"), areas.context.expect("c"));
+            assert_eq!(session.bottom(), context.y, "{width}x{height}");
+            assert_eq!(session.x, context.x);
+            assert_eq!(session.width, context.width);
+            assert!(session.x >= results.right(), "right column is on the right");
+            if let Some(trends) = areas.trends {
+                assert_eq!(context.bottom(), trends.y);
+                assert_eq!(trends.x, session.x);
+                assert_eq!(trends.bottom(), editor.bottom());
+            } else {
+                assert_eq!(context.bottom(), editor.bottom());
+            }
         }
+    }
+
+    #[test]
+    fn trends_are_left_out_when_the_right_column_is_too_short() {
+        let a = connected_app(100, 20);
+        let areas = layout::compute(Rect::new(0, 0, 100, 20), &a.state, &a.config);
+        assert!(areas.trends.is_none());
+        assert!(areas.session.is_some() && areas.context.is_some());
+        let tall = connected_app(100, 40);
+        let areas = layout::compute(Rect::new(0, 0, 100, 40), &tall.state, &tall.config);
+        assert!(areas.trends.is_some());
     }
 
     #[test]
@@ -2408,10 +2394,10 @@ mod tests {
         stats.sees_all_sessions = false;
         stats.active = Some(0);
         stats.oldest_transaction_secs = None;
-        let a = roomy_session_app(stats);
-        let out = render(&a, 150, 24);
-        assert!(out.contains("90 of 100 on server"), "{out}");
-        assert!(out.contains("needs the pg_read_all_stats role"), "{out}");
+        let a = with_stats(160, 40, stats);
+        let out = render(&a, 160, 40);
+        assert!(out.contains("90 of 100"), "{out}");
+        assert!(out.contains("needs the pg_read_all_stats"), "{out}");
         assert!(out.contains("oldest tx n/a"), "{out}");
     }
 
@@ -2422,7 +2408,7 @@ mod tests {
         a.state.connection_mut_for_tests(id).stats_error = Some("permission denied".to_string());
         let out = render(&a, 130, 24);
         assert!(
-            out.contains("Statistics unavailable: permission denied"),
+            out.contains("Statistics unavailable:") && out.contains("permission denied"),
             "{out}"
         );
     }
@@ -2548,12 +2534,22 @@ mod tests {
     fn the_selected_suggestion_is_not_marked_by_color_alone() {
         let mut a = app(80, 24);
         type_text(&mut a, "de");
-        // The cursor is on row 1. Row 2 is the popup border, row 3 the first
-        // item, which is selected, and row 4 the second.
-        let selected = cell_style(&a, 80, 24, 5, EDITOR_TOP + 3);
-        assert!(selected.add_modifier.contains(Modifier::REVERSED));
-        let other = cell_style(&a, 80, 24, 5, EDITOR_TOP + 4);
-        assert!(!other.add_modifier.contains(Modifier::REVERSED));
+        let mut t = terminal(80, 24);
+        t.draw(|f| draw(f, &a, &Theme::default())).expect("draw");
+        let buffer = t.backend().buffer();
+        // Exactly one row of the popup is reversed: the selected suggestion.
+        // The popup may open below the cursor or above it.
+        let reversed_rows: Vec<u16> = (0..24)
+            .filter(|y| {
+                (0..80).any(|x| {
+                    buffer[(x, *y)]
+                        .style()
+                        .add_modifier
+                        .contains(Modifier::REVERSED)
+                })
+            })
+            .collect();
+        assert_eq!(reversed_rows.len(), 1, "{reversed_rows:?}");
     }
 
     #[test]
@@ -2588,10 +2584,7 @@ mod tests {
         type_text(&mut a, "x");
         let out = render(&a, 80, 24);
         assert!(out.contains("┌ ▶ Editor: Buffer 2 (2/2) ─"), "{out}");
-        assert!(
-            out.lines().nth(8).is_some_and(|l| l.starts_with("│1 x")),
-            "{out}"
-        );
+        assert!(out.lines().any(|l| l.starts_with("│1 x")), "{out}");
     }
 
     #[test]
@@ -2700,7 +2693,7 @@ mod tests {
         let mut t = terminal(80, 24);
         t.draw(|f| draw(f, &a, &Theme::default())).expect("draw");
         let pos = t.get_cursor_position().expect("cursor");
-        assert_eq!((pos.x, pos.y), (3 + 3, EDITOR_TOP + 2));
+        assert_eq!((pos.x, pos.y), (3 + 3, editor_top() + 2));
     }
 
     #[test]
@@ -2719,7 +2712,10 @@ mod tests {
         let mut a = app(80, 24);
         type_text(&mut a, &format!("{}END", "x".repeat(150)));
         let out = render(&a, 80, 24);
-        let row = out.lines().nth(8).expect("first editor row");
+        let row = out
+            .lines()
+            .find(|l| l.starts_with("│1 "))
+            .expect("first editor row");
         assert!(row.contains("END"), "{row}");
         assert!(row.starts_with("│1 "), "{row}");
         assert!(!row.contains(&"x".repeat(100)));
@@ -2819,7 +2815,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_terminal_shows_the_largest_tables_beside_the_session() {
+    fn the_largest_tables_are_drawn_below_the_context() {
         let mut stats = sample_stats();
         stats.top_tables = vec![
             table_size("public", "events", 900_000_000),
@@ -2848,9 +2844,9 @@ mod tests {
     }
 
     #[test]
-    fn a_narrower_terminal_does_not_draw_the_trends() {
-        let a = with_stats(130, 24, sample_stats());
-        assert!(!render(&a, 130, 24).contains("┌ Trends"));
+    fn a_short_terminal_does_not_draw_the_trends() {
+        let a = with_stats(130, 20, sample_stats());
+        assert!(!render(&a, 130, 20).contains("┌ Trends"));
     }
 
     #[test]
@@ -2902,21 +2898,5 @@ mod tests {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
         assert_snapshot("grid_90x24", &out);
-    }
-
-    #[test]
-    fn the_oxpecker_sits_top_left_on_wide_terminals_and_not_on_narrow_ones() {
-        let wide = connected_app(120, 24);
-        let out = render(&wide, 120, 24);
-        let first = out.lines().next().expect("row");
-        assert!(first.starts_with("     ,--."), "{first}");
-        assert!(out.lines().any(|l| l.contains("==>")));
-        assert!(out.lines().any(|l| l.starts_with(" pgpeck")));
-        assert!(out.contains("┌ Context"), "context stays");
-        assert_snapshot("art_120x24", &out);
-
-        let narrow = connected_app(100, 24);
-        let out = render(&narrow, 100, 24);
-        assert!(!out.contains("==>") && !out.contains(" pgpeck"), "{out}");
     }
 }

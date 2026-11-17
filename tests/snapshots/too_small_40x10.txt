@@ -1,6 +1,6 @@
 Terminal too small. Need 60x15
 ┌ ▶ Results ───────────────────────────┐
-│No results yet. Run a statement with C│
+│No results yet. Run with Ctrl+R.      │
 │                                      │
 │                                      │
 │                                      │

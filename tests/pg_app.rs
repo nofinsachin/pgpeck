@@ -205,8 +205,14 @@ async fn the_statement_under_the_cursor_runs_not_the_whole_buffer() {
     h.until("the results", |a| a.state.doc().results.is_some())
         .await;
     let screen = h.screen();
-    // The editor still shows all three lines, so look at the results pane only.
-    let results = &screen[screen.find("┌ Results").expect("results pane")..];
+    // The editor still shows all three lines, so look at the results pane
+    // only: the lines from its title down to the editor's title.
+    let results: String = screen
+        .lines()
+        .skip_while(|l| !l.contains("┌ Results"))
+        .take_while(|l| !l.contains("Editor"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(results.contains("second"), "{screen}");
     assert!(
         !results.contains("first") && !results.contains("third"),

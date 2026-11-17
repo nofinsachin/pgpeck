@@ -1,24 +1,24 @@
-┌ ▶ Context ───────────────────────┐┌ Session ───────────────────────────────────────────┐
-│Welcome to pgpeck.                ││Not connected                                       │
-│Press C to connect to a database. ││                                                    │
-│                                  ││                                                    │
-│                                  ││                                                    │
-│                                  ││                                                    │
-└──────────────────────────────────┘└────────────────────────────────────────────────────┘
-┌ Editor ┌────────────────────────────── Connect ───────────────────────────────┐────────┐
-│1       │> type to search, or paste a postgres:// address                      │        │
-│        │▶ billing              billing.example.com:5432/ledger  [PROD]        │        │
-│        │  local dev            localhost:5432/dev                             │        │
+┌ Results ───────────────────────────────────────────┐┌ Session ─────────────────────────┐
+│No results yet. Run with Ctrl+R.                    ││Not connected                     │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│        ┌────────────────────────────── Connect ───────────────────────────────┐        │
+│        │> type to search, or paste a postgres:// address                      │        │
+│        │▶ billing              billing.example.com:5432/ledger  [PROD]        │────────┘
+│        │  local dev            localhost:5432/dev                             │────────┐
 │        │  New connection: enter the details                                   │        │
-└────────│                                                                      │────────┘
-┌ Results│                                                                      │────────┐
-│No resul│Enter connect  Ctrl+E edit  Esc close  Ctrl+S save address as profile │        │
-│        └──────────────────────────────────────────────────────────────────────┘        │
-│                                                                                        │
-│                                                                                        │
-│                                                                                        │
-│                                                                                        │
-│                                                                                        │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+│        │                                                                      │tabase. │
+│        │                                                                      │        │
+│        │Enter connect  Ctrl+E edit  Esc close  Ctrl+S save address as profile │────────┘
+└────────└──────────────────────────────────────────────────────────────────────┘────────┐
+┌ Editor ────────────────────────────────────────────┐│Not connected                     │
+│1                                                   ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+└────────────────────────────────────────────────────┘└──────────────────────────────────┘
 C connect  F find  R run  E edit  N new buffer  Q quit  ? help
  no connection │ focus: Context │ Ln 1, Col 1

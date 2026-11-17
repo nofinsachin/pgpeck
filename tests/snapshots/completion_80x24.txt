@@ -1,24 +1,24 @@
-┌ Context ─────────────────────────┐┌ Session ─────────────────────────────────┐
-│Welcome to pgpeck.                ││Not connected                             │
-│Press C to connect to a database. ││                                          │
-│Press Esc for commands.           ││                                          │
-│                                  ││                                          │
-│                                  ││                                          │
-└──────────────────────────────────┘└──────────────────────────────────────────┘
-┌ ▶ Editor ────────────────────────────────────────────────────────────────────┐
-│1 SELECT 1                                                                    │
-│2 FROM t                                                                      │
-│3 WHERE x                                                                     │
-│4 de                                                                          │
-└──┌────────────┐──────────────────────────────────────────────────────────────┘
-┌ R│  desc    kw│──────────────────────────────────────────────────────────────┐
-│No│▶ delete  kw│Run a statement with Ctrl+R.                                  │
-│  │  declare kw│                                                              │
-│  │  default kw│                                                              │
-│  └────────────┘                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌ Results ─────────────────────────────────┐┌ Session ─────────────────────────┐
+│No results yet. Run with Ctrl+R.          ││Not connected                     │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          │└──────────────────────────────────┘
+│                                          │┌ Context ─────────────────────────┐
+│                                          ││Welcome to pgpeck.                │
+│                                          ││Press C to connect to a database. │
+│                                          ││Press Esc for commands.           │
+│  ┌────────────┐                          │└──────────────────────────────────┘
+└──│  desc    kw│──────────────────────────┘┌ Trends: largest tables ──────────┐
+┌ ▶│▶ delete  kw│──────────────────────────┐│Not connected                     │
+│1 │  declare kw│                          ││                                  │
+│2 │  default kw│                          ││                                  │
+│3 └────────────┘                          ││                                  │
+│4 de                                      ││                                  │
+└──────────────────────────────────────────┘└──────────────────────────────────┘
 Enter accept suggestion  Down next suggestion  Esc dismiss suggestions
  no connection │ focus: Editor │ Ln 4, Col 3

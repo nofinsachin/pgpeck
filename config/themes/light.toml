@@ -1,4 +1,4 @@
-# Light theme, in the colors of the oxpecker: brown and tan for the body,
+# Light theme, in the colors of the oxpecker bird: brown and tan for the body,
 # yellow, red, black and cream for the accents. Colors are names or #rrggbb.
 focus = "#7b4a21"          # brown
 error = "#b3261e"          # red
@@ -21,4 +21,3 @@ line_number = "#b09a80"
 cursor_line_bg = "#efe0c0"
 background = "#faf3e0"     # cream
 border = "#b59a73"
-bird = "#6b4423"
