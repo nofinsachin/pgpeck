@@ -1549,9 +1549,8 @@ fn draw_relations(frame: &mut Frame, app: &App, theme: &Theme, view: &relations:
         format!("{} close", key(Action::DialogCancel))
     } else {
         format!(
-            "{} go to table{back}  {} insert JOIN  {} sample rows  {} close",
+            "{} go to table{back}  {} sample rows  {} close",
             key(Action::DialogSubmit),
-            key(Action::RelationJoin),
             key(Action::RelationSample),
             key(Action::DialogCancel)
         )
@@ -3220,7 +3219,7 @@ mod tests {
             "▶ (customer_id) → sales.customers (id)",
             "Referenced by (points to this table)",
             "(id) ← public.items (order_id)",
-            "insert JOIN",
+            "sample rows",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }

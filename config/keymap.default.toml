@@ -217,8 +217,6 @@
 # Back to the table you came from.
 "backspace" = "dialog.backspace"
 "esc" = "dialog.cancel"
-# Put a JOIN to the selected table in the editor.
-"j" = "relations.join"
 # Select sample rows of the selected table.
 "s" = "relations.sample"
 

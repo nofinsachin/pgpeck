@@ -849,7 +849,6 @@ impl App {
             | Action::FindJump(_)
             | Action::FindColumns
             | Action::FindRelations
-            | Action::RelationJoin
             | Action::RelationSample => {}
             Action::FindOpen => self.open_find(),
             Action::HistoryOpen => self.open_history(),
@@ -945,9 +944,8 @@ impl App {
             .map_or_else(Vec::new, |catalog| view.links(catalog))
     }
 
-    /// J puts a JOIN to the selected table in the editor. S selects sample
-    /// rows of it.
-    fn submit_relation(&mut self, sample: bool) {
+    /// S selects sample rows of the selected table and runs the query.
+    fn submit_relation(&mut self) {
         let Some(Dialog::Relations(view)) = &self.state.dialog else {
             return;
         };
@@ -956,32 +954,23 @@ impl App {
         let Some(link) = links.get(view.selected) else {
             return;
         };
-        let (join, other) = (view.join_sql(link), link.other());
+        let other = link.other();
         self.state.dialog = None;
         self.state.focus = Pane::Editor;
         let opts = self.config.editor.options();
-        if sample {
-            let name = format!(
-                "{}.{}",
-                crate::catalog::quote(&other.0),
-                crate::catalog::quote(&other.1)
-            );
-            let statement = format!("SELECT * FROM {name} LIMIT {SAMPLE_ROWS};");
-            let editor = self.state.editor_mut();
-            editor.move_cursor(Motion::BufferEnd, false, 1);
-            if !editor.text().trim().is_empty() {
-                editor.insert_str("\n\n", &opts);
-            }
-            editor.insert_str(&statement, &opts);
-            self.run_statement();
-        } else {
-            let editor = self.state.editor_mut();
-            editor.move_cursor(Motion::BufferEnd, false, 1);
-            if !editor.text().trim().is_empty() {
-                editor.insert_str("\n", &opts);
-            }
-            editor.insert_str(&join, &opts);
+        let name = format!(
+            "{}.{}",
+            crate::catalog::quote(&other.0),
+            crate::catalog::quote(&other.1)
+        );
+        let statement = format!("SELECT * FROM {name} LIMIT {SAMPLE_ROWS};");
+        let editor = self.state.editor_mut();
+        editor.move_cursor(Motion::BufferEnd, false, 1);
+        if !editor.text().trim().is_empty() {
+            editor.insert_str("\n\n", &opts);
         }
+        editor.insert_str(&statement, &opts);
+        self.run_statement();
     }
 
     fn open_history(&mut self) {
@@ -1334,8 +1323,7 @@ impl App {
                 v.back();
             }
             (Action::DialogCancel, Some(Dialog::Relations(_))) => self.state.dialog = None,
-            (Action::RelationJoin, Some(Dialog::Relations(_))) => self.submit_relation(false),
-            (Action::RelationSample, Some(Dialog::Relations(_))) => self.submit_relation(true),
+            (Action::RelationSample, Some(Dialog::Relations(_))) => self.submit_relation(),
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
             (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
             (Action::DialogNext | Action::DialogPrev, Some(Dialog::Session(f))) => f.next_field(),
@@ -4751,30 +4739,25 @@ mod tests {
     }
 
     #[test]
-    fn j_puts_a_join_in_the_editor_and_s_runs_a_sample_of_the_other_table() {
+    fn s_runs_a_sample_of_the_selected_table() {
         let mut a = app();
         let conn = connected(&mut a);
         a.update(Event::Background(Background::Catalog {
             conn,
             result: Ok(sample_catalog()),
         }));
-        let open = |a: &mut App| {
-            ctrl(a, 'p');
-            type_text(a, "public.orders");
-            alt(a, 'z');
-        };
-        open(&mut a);
-        press(&mut a, KeyCode::Char('j'), KeyModifiers::NONE);
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "public.orders");
+        alt(&mut a, 'z');
+        let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::NONE);
         assert!(a.state.dialog.is_none());
         assert_eq!(a.state.focus, Pane::Editor);
         assert_eq!(
             a.state.editor().text(),
-            "JOIN public.items ON public.orders.id = public.items.order_id"
+            "SELECT * FROM public.items LIMIT 100;"
         );
-        open(&mut a);
-        let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::NONE);
         assert!(commands.iter().any(
-            |c| matches!(c, Command::Run { sql, .. } if sql.ends_with("SELECT * FROM public.items LIMIT 100"))
+            |c| matches!(c, Command::Run { sql, .. } if sql == "SELECT * FROM public.items LIMIT 100")
         ));
     }
 

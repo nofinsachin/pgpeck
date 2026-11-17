@@ -22,7 +22,7 @@
 ┌ ▶ E│                                                                                        │    │
 │1   │                                                                                        │    │
 │    │                                                                                        │    │
-│    │Enter go to table  Backspace back  j insert JOIN  s sample rows  Esc close              │    │
+│    │Enter go to table  Backspace back  s sample rows  Esc close                             │    │
 │    └────────────────────────────────────────────────────────────────────────────────────────┘    │
 │                                                              ││                                  │
 └──────────────────────────────────────────────────────────────┘└──────────────────────────────────┘

@@ -73,8 +73,6 @@ pub enum Action {
     /// On a table or view: list only its columns. Again: back to everything.
     FindColumns,
     FindRelations,
-    /// In the relationship view: put a JOIN to the selected table in the editor.
-    RelationJoin,
     /// In the relationship view: select sample rows of the selected table.
     RelationSample,
     SessionEditDatabase,
@@ -151,7 +149,6 @@ const ACTIONS: &[(&str, Action)] = &[
     ("find.jump_type", Action::FindJump(Kind::Type)),
     ("find.jump_schema", Action::FindJump(Kind::Schema)),
     ("find.open_relationships", Action::FindRelations),
-    ("relations.join", Action::RelationJoin),
     ("relations.sample", Action::RelationSample),
     ("session.edit_database", Action::SessionEditDatabase),
     ("session.edit_user", Action::SessionEditUser),
@@ -354,7 +351,6 @@ impl Action {
             },
             Action::FindColumns => "columns of this table",
             Action::FindRelations => "relationships",
-            Action::RelationJoin => "put a join in the editor",
             Action::RelationSample => "select sample rows",
             Action::SessionEditDatabase => "change database",
             Action::SessionEditUser => "change user",

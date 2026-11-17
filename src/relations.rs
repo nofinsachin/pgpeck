@@ -1,7 +1,7 @@
 //! The relationship view: the foreign keys that leave and enter one table, and
 //! a trail of the tables you followed to get there. Pure logic.
 
-use crate::catalog::{quote, Catalog, ForeignKey};
+use crate::catalog::{Catalog, ForeignKey};
 
 /// A table, as `(schema, name)`.
 pub type Table = (String, String);
@@ -39,10 +39,6 @@ impl Link<'_> {
             (&self.key.ref_columns, &self.key.columns)
         }
     }
-}
-
-fn qualified(table: &Table) -> String {
-    format!("{}.{}", quote(&table.0), quote(&table.1))
 }
 
 impl View {
@@ -104,19 +100,6 @@ impl View {
         } else {
             false
         }
-    }
-
-    /// `JOIN other ON shown.a = other.b AND ...`, ready for the editor.
-    pub fn join_sql(&self, link: &Link<'_>) -> String {
-        let shown = qualified(self.current());
-        let other = qualified(&link.other());
-        let (mine, theirs) = link.columns();
-        let conditions: Vec<String> = mine
-            .iter()
-            .zip(theirs)
-            .map(|(a, b)| format!("{shown}.{} = {other}.{}", quote(a), quote(b)))
-            .collect();
-        format!("JOIN {other} ON {}", conditions.join(" AND "))
     }
 }
 
@@ -203,25 +186,6 @@ mod tests {
         assert!(view.back());
         assert_eq!(view.current().1, "orders");
         assert!(!view.back(), "already at the first table");
-    }
-
-    #[test]
-    fn a_join_uses_both_directions_and_every_column_of_a_composite_key() {
-        let catalog = catalog();
-        let view = View::new("public", "orders");
-        let links = view.links(&catalog);
-        assert_eq!(
-            view.join_sql(&links[0]),
-            "JOIN sales.customers ON public.orders.customer_id = sales.customers.id"
-        );
-        assert_eq!(
-            view.join_sql(&links[1]),
-            "JOIN public.items ON public.orders.id = public.items.order_id"
-        );
-        assert_eq!(
-            view.join_sql(&links[2]),
-            "JOIN public.ledger ON public.orders.tenant = public.ledger.tenant AND public.orders.number = public.ledger.ref"
-        );
     }
 
     #[test]

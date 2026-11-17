@@ -23,7 +23,7 @@ name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refu
   result from the server.
 - **Go back** to what you ran. `Alt+H` lists your statements, newest first, and searches them.
 - **Follow foreign keys.** From a table in the Find window, `Alt+Z` shows what it points to and what
-  points to it. You can walk from table to table and put a ready-made `JOIN` in the editor.
+  points to it. You can walk from table to table and select sample rows.
 - **Find** tables, views, columns, functions, types and schemas by name with `Ctrl+P`.
 - **Stay safe.** Risky statements wait for a typed `y` or `yes`. The session strip and the status
   bar flag open and failed transactions.
@@ -123,7 +123,6 @@ Remove the container with `docker rm -f pgpeck-pg`.
 | | `Alt+Z` | on a table or view: the relationship view |
 | Relationship view | `Enter` | show the table on the other end of the selected key |
 | | `Backspace` | back to the table you came from |
-| | `J` | put a `JOIN` to the selected table in the editor |
 | | `S` | select sample rows of the selected table |
 | | `Esc` | close |
 | | `Esc` | close, changing nothing |
@@ -146,10 +145,8 @@ The session strip and the status bar show an open or failed transaction.
 In the Find window, select a table or view and press `Alt+Z`. The window lists the foreign keys
 that leave the table ("References") and the ones that enter it ("Referenced by"), with the
 columns on both sides. `Enter` shows the table on the other end, so you can walk through the
-schema, and `Backspace` goes back. `J` puts a ready-made `JOIN … ON …` to the selected table at
-the end of the editor (composite keys join on every column), and `S` selects sample rows of it.
-The keys come from the schema read when you connect. They refresh after a statement that changes
-the schema.
+schema, and `Backspace` goes back. `S` selects sample rows of the selected table. The keys come
+from the schema read when you connect. They refresh after a statement that changes the schema.
 
 ## History
 
