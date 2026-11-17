@@ -1,13 +1,14 @@
-┌ Session ─────────────────────────────────┐┌ Context ─────────────────────────┐
-│Not connected                             ││Welcome to pgpeck.                │
-└──────────────────────────────────────────┘│Press C to connect to a database. │
-┌ Results ─────────────────────────────────┐│Press Esc for commands.           │
+┌ Session ─────────────────────────────────────────────────────────────────────┐
+│Not connected                                                                 │
+│Enter accept suggestion  Down next suggestion  Esc dismiss suggestions        │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Results ─────────────────────────────────┐┌ Context ─────────────────────────┐
+│                                          ││Welcome to pgpeck.                │
+│                                          ││Press C to connect to a database. │
+│                                          ││Press Esc for commands.           │
 │                                          │└──────────────────────────────────┘
 │                                          │┌ Trends ──────────────────────────┐
 │                                          ││Not connected                     │
-│                                          ││                                  │
-│                                          ││                                  │
-│                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
@@ -20,5 +21,4 @@
 │3 └────────────┘                          ││                                  │
 │4 de                                      ││                                  │
 └──────────────────────────────────────────┘└──────────────────────────────────┘
-Enter accept suggestion  Down next suggestion  Esc dismiss suggestions
  no connection │ focus: Editor │ Ln 4, Col 3

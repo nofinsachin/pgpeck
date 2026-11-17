@@ -1,13 +1,14 @@
-┌ Session ─────────────────────────────────┐┌ ▶ Context ───────────────────────┐
-│Not connected                             ││Welcome to pgpeck.                │
-└──────────────────────────────────────────┘│Press C to connect to a database. │
-┌ Results ─────────────────────────────────┐│                                  │
+┌ Session ─────────────────────────────────────────────────────────────────────┐
+│Not connected                                                                 │
+│C connect  F find  R run  E edit  N new buffer  Q quit  ? help                │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Results ─────────────────────────────────┐┌ ▶ Context ───────────────────────┐
+│                                          ││Welcome to pgpeck.                │
+│                                          ││Press C to connect to a database. │
+│                                          ││                                  │
 │                                          │└──────────────────────────────────┘
 │                                          │┌ Trends ──────────────────────────┐
 │                                          ││Not connected                     │
-│                                          ││                                  │
-│                                          ││                                  │
-│                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
@@ -20,5 +21,4 @@
 │                                          ││                                  │
 │                                          ││                                  │
 └──────────────────────────────────────────┘└──────────────────────────────────┘
-C connect  F find  R run  E edit  N new buffer  Q quit  ? help
  no connection │ focus: Context │ Ln 1, Col 1

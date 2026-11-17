@@ -1,24 +1,24 @@
-┌ Session ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
-│Session: 127.0.0.1  PROD  Database: 127.0.0.1:5432, ││Buffer     Buffer 1               │
-└────────────────────────────────────────────────────┘│Statement  delete from orders     │
-┌ Results ───────────────────────────────────────────┐│                                  │
-│                                                    │└──────────────────────────────────┘
-│                                                    │┌ Trends ──────────────────────────┐
-│        ┌────────────────────────────── Confirm ───────────────────────────────┐        │
+┌ Session ───────────────────────────────────────────────────────────────────────────────┐
+│Session: 127.0.0.1  PROD  Database: 127.0.0.1:5432, alice, app  TLS off                 │
+│Ctrl+R run  Esc commands  Ctrl+O connect                                                │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Results ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│                                                    ││Buffer     Buffer 1               │
+│        ┌────────────────────────────── Confirm ───────────────────────────────┐ers     │
 │        │Connection  127.0.0.1  PROD                                           │        │
-│        │                                                                      │        │
-│        │  delete from orders                                                  │        │
+│        │                                                                      │────────┘
+│        │  delete from orders                                                  │────────┐
 │        │                                                                      │        │
 │        │This is a production connection and the statement changes data.       │        │
 │        │UPDATE or DELETE without WHERE changes every row.                     │        │
 │        │                                                                      │        │
-│No resul│Run it? Type y or yes:                                                │        │
-└────────│Enter run (after y or yes)  Esc cancel                                │        │
-┌ ▶ Edito└──────────────────────────────────────────────────────────────────────┘        │
+│        │Run it? Type y or yes:                                                │        │
+│No resul│Enter run (after y or yes)  Esc cancel                                │        │
+└────────└──────────────────────────────────────────────────────────────────────┘        │
+┌ ▶ Editor ──────────────────────────────────────────┐│                                  │
 │1 DELETE FROM orders                                ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
-Ctrl+R run  Esc commands  Ctrl+O connect
  PROD (uri) │ app │ alice │ no TLS │ focus: Editor │ Ln 1, Col 19

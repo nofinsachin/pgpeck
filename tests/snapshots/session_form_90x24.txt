@@ -1,24 +1,24 @@
-┌ ▶ Session ─────────────────────────────────────────┐┌ Context ─────────────────────────┐
-│Session: 127.0.0.1  Database: 127.0.0.1:5432, alice,││Buffer     Buffer 1               │
-└────────────────────────────────────────────────────┘│Statement  none under the cursor  │
-┌ Results ───────────────────────────────────────────┐│                                  │
-│                                                    │└──────────────────────────────────┘
-│                                                    │┌ Trends ──────────────────────────┐
-│                                                    ││Reading…                          │
+┌ ▶ Session ─────────────────────────────────────────────────────────────────────────────┐
+│Session: 127.0.0.1  Database: 127.0.0.1:5432, alice, app  TLS off                       │
+│D change database  U change user  F5 refresh session  Z roll back  C connect            │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Results ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│                                                    ││Buffer     Buffer 1               │
+│                                                    ││Statement  none under the cursor  │
 │              ┌───────────────────── Change session ─────────────────────┐              │
-│              │Saving connects again. You may be asked for the password. │              │
-│              │                                                          │              │
+│              │Saving connects again. You may be asked for the password. │──────────────┘
+│              │                                                          │──────────────┐
 │              │  Database  app                                           │              │
 │              │▶ User      alice                                         │              │
 │              │                                                          │              │
 │              │                                                          │              │
-│No results yet│Tab next field  Enter reconnect  Esc cancel               │              │
-└──────────────└──────────────────────────────────────────────────────────┘              │
+│              │Tab next field  Enter reconnect  Esc cancel               │              │
+│No results yet└──────────────────────────────────────────────────────────┘              │
+└────────────────────────────────────────────────────┘│                                  │
 ┌ Editor ────────────────────────────────────────────┐│                                  │
 │1                                                   ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
-D change database  U change user  F5 refresh session  Z roll back  C connect  Esc commands
  (uri) │ app │ alice │ no TLS │ focus: Session │ Ln 1, Col 1

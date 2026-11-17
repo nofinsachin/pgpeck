@@ -1,26 +1,26 @@
-┌ Session ───────────────────────────────────────────┐┌ ▶ Context ───────────────────────┐
-│Not connected                                       ││Welcome to pgpeck.                │
-└────────────────────────────────────────────────────┘│Press C to connect to a database. │
-┌ Results ───────────────────────────────────────────┐│                                  │
-│                                                    │└──────────────────────────────────┘
-│         ┌────────────────────────── New connection ──────────────────────────┐─────────┐
-│         │Passwords are never saved. You are asked for it next.               │         │
+┌ Session ───────────────────────────────────────────────────────────────────────────────┐
+│Not connected                                                                           │
+│C connect  F find  R run  E edit  N new buffer  Q quit  ? help                          │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Results ───────────────────────────────────────────┐┌ ▶ Context ───────────────────────┐
+│         ┌────────────────────────── New connection ──────────────────────────┐         │
+│         │Passwords are never saved. You are asked for it next.               │atabase. │
 │         │                                                                    │         │
-│         │▶ Host        localhost                                             │         │
-│         │  Port        5432                                                  │         │
+│         │▶ Host        localhost                                             │─────────┘
+│         │  Port        5432                                                  │─────────┐
 │         │  Database    (empty: same as the user)                             │         │
 │         │  User        alice                                                 │         │
 │         │  Save as     (empty: do not save this connection)                  │         │
 │         │  SSL mode    disable  (Space to change. TLS is not supported yet)  │         │
 │         │  Production  [ ] no  (Space to switch)                             │         │
 │         │                                                                    │         │
+│         │                                                                    │         │
 │No result│                                                                    │         │
-└─────────│                                                                    │         │
-┌ Editor ─│Tab next field  Enter connect  Esc back                             │         │
-│1        └────────────────────────────────────────────────────────────────────┘         │
+└─────────│Tab next field  Enter connect  Esc back                             │         │
+┌ Editor ─└────────────────────────────────────────────────────────────────────┘         │
+│1                                                   ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
-C connect  F find  R run  E edit  N new buffer  Q quit  ? help
  no connection │ focus: Context │ Ln 1, Col 1

@@ -644,7 +644,7 @@ async fn transactions_are_flagged_and_rolled_back_with_one_key() {
     h.run("begin").await;
     let screen = h.screen();
     assert!(screen.contains("TX OPEN"), "{screen}");
-    assert!(screen.contains("Transaction open"), "{screen}");
+    assert!(screen.contains("Transaction: open"), "{screen}");
 
     h.run("select 1/0").await;
     let screen = h.screen();
