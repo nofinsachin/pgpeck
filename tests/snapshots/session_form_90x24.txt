@@ -1,16 +1,16 @@
-┌ Results ───────────────────────────────────────────┐┌ ▶ Session ───────────────────────┐
-│                                                    ││127.0.0.1  connected              │
-│                                                    ││app · alice                       │
-│                                                    ││Reading statistics…               │
-│                                                    ││127.0.0.1:5432  PostgreSQL 16.2   │
-│                                                    ││TLS off                           │
+┌ ▶ Session ─────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│Session: 127.0.0.1  Database: 127.0.0.1:5432, alice,││Buffer     Buffer 1               │
+└────────────────────────────────────────────────────┘│Statement  none under the cursor  │
+┌ Results ───────────────────────────────────────────┐│                                  │
 │                                                    │└──────────────────────────────────┘
-│              ┌───────────────────── Change session ─────────────────────┐──────────────┐
+│                                                    │┌ Trends ──────────────────────────┐
+│                                                    ││Reading…                          │
+│              ┌───────────────────── Change session ─────────────────────┐              │
 │              │Saving connects again. You may be asked for the password. │              │
-│              │                                                          │r the cursor  │
+│              │                                                          │              │
 │              │  Database  app                                           │              │
-│              │▶ User      alice                                         │──────────────┘
-│              │                                                          │les ──────────┐
+│              │▶ User      alice                                         │              │
+│              │                                                          │              │
 │              │                                                          │              │
 │No results yet│Tab next field  Enter reconnect  Esc cancel               │              │
 └──────────────└──────────────────────────────────────────────────────────┘              │

@@ -1,26 +1,26 @@
-# Light theme in the PostgreSQL palette: blues (#0064a5, #336791, #008bb9) and
-# greys (#585858, #666666, #848484) on white, with black text.
-# Error, warning and production keep red and orange so they stand out. Row
-# banding and the cursor line are faint tints of the palette blue.
+# Light theme following postgresql.org's light mode (its stylesheet,
+# dyncss/base.css): white background, #333 text, #e7eae8 for banding, #336791
+# (the official PostgreSQL blue) for focus, labels and the column header, and
+# #008bb9 for keywords. One background everywhere.
 # Colors are names or #rrggbb.
-focus = "#0064a5"
-error = "#b3261e"
+# Focus, errors and NULL are never conveyed by color alone (R20.9).
+focus = "#336791"
+error = "#b52525"          # the site's red
 null = "#848484"
 dimmed = "#666666"
-keyword = "#0064a5"
-number = "#336791"
+keyword = "#008bb9"
+number = "#333333"
 string = "#585858"
-status_prod = "#b3261e"
-status_fg = "#ffffff"
-status_bg = "#585858"
-header_fg = "#0064a5"
-header_bg = "#000000"
-row_alt_bg = "#eef3f7"
-ok = "#336791"
+status_prod = "#b52525"
+status_fg = "#333333"
+status_bg = "#ffffff"
+header_fg = "#336791"
+header_bg = "#ffffff"
+row_alt_bg = "#e7eae8"
+ok = "#333333"
 warn = "#c4620a"
 label = "#336791"
-value = "#000000"
+value = "#333333"
 line_number = "#848484"
-cursor_line_bg = "#dbe7f1"
 background = "#ffffff"
-border = "#336791"
+border = "#688297"         # the site's grayish blue

@@ -1,17 +1,17 @@
-┌ Results ───────────────────────────────────────────┐┌ Session ─────────────────────────┐
-│                                                    ││127.0.0.1  connected              │
-│                                                    ││app · alice                       │
-│                                                    ││Transaction FAILED. Alt+Z rolls   │
-│                                                    ││back                              │
-│                                                    ││Reading statistics…               │
+┌ Session ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│Session: 127.0.0.1  Transaction: FAILED. Alt+Z rolls││Buffer     Buffer 1               │
+└────────────────────────────────────────────────────┘│Statement  none under the cursor  │
+┌ Results ───────────────────────────────────────────┐│                                  │
 │                                                    │└──────────────────────────────────┘
-│                                                    │┌ Context ─────────────────────────┐
-│                                                    ││Buffer     Buffer 1               │
-│                                                    ││Statement  none under the cursor  │
-│                                                    ││                                  │
-│                                                    │└──────────────────────────────────┘
-│                                                    │┌ Trends: largest tables ──────────┐
+│                                                    │┌ Trends ──────────────────────────┐
 │                                                    ││Reading…                          │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
+│                                                    ││                                  │
 │No results yet. Run with Ctrl+R.                    ││                                  │
 └────────────────────────────────────────────────────┘│                                  │
 ┌ ▶ Editor ──────────────────────────────────────────┐│                                  │

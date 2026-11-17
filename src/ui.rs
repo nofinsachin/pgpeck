@@ -51,6 +51,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     if let Some(rect) = areas.editor {
         draw_editor(frame, app, theme, rect);
     }
+    if let Some(rect) = areas.logo {
+        draw_logo(frame, theme, rect);
+    }
     if let Some(rect) = areas.context {
         draw_context(frame, app, theme, rect);
     }
@@ -214,10 +217,54 @@ fn draw_context(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(body, area);
 }
 
-/// The session pane: who you are connected as, and how busy this database is.
-/// The numbers are for the connected database only. CPU and memory are shared
-/// by every database on the server and PostgreSQL cannot report them, so the
-/// shared resource shown is the server's connection limit.
+/// The woodpecker, drawn above the context pane and facing left, toward the
+/// results. The leading spaces place each line over the head.
+const LOGO: [&str; 7] = [
+    "       ▄▄▄▄▄▄▄",
+    "    ▄██████████▄",
+    "◀████████  ●  ▀██",
+    "     ████████████",
+    "      ▀████████▀",
+    "       ▀▀▀▀▀▀▀",
+    "       PGPeck",
+];
+
+fn draw_logo(frame: &mut Frame, theme: &Theme, area: Rect) {
+    let art = Style::new().fg(theme.focus);
+    let lines: Vec<Line> = LOGO
+        .iter()
+        .enumerate()
+        .map(|(row, text)| match row {
+            // The eye keeps the text color, so it reads against the head.
+            2 => {
+                let (head, tail) = text.split_once('●').unwrap_or((text, ""));
+                Line::from(vec![
+                    Span::styled(head.to_string(), art),
+                    Span::styled("●", Style::new().fg(theme.value)),
+                    Span::styled(tail.to_string(), art),
+                ])
+            }
+            6 => Line::styled(
+                text.to_string(),
+                Style::new().fg(theme.value).add_modifier(Modifier::BOLD),
+            ),
+            _ => Line::styled(text.to_string(), art),
+        })
+        .collect();
+    // Centered as one block, so the shape keeps its spaces.
+    let width = LOGO.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let block = Rect {
+        x,
+        width: width.min(area.width),
+        ..area
+    };
+    frame.render_widget(Paragraph::new(lines), block);
+}
+
+/// The session strip above the results: the connection's name, where it
+/// points, and anything that needs attention. The server numbers are in the
+/// trends pane.
 fn draw_session(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
     let block = pane_block(app, theme, Pane::Session);
@@ -232,24 +279,20 @@ fn draw_session(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         .key_for(Action::TransactionRollback, &[Scope::Global], |_| true)
         .map_or_else(|| "(unbound)".to_string(), key_label);
     let view = SessionView::new(theme, conn, &rollback_key);
-    // A tall pane lists everything. A short one keeps what matters most.
-    let lines = if inner.height >= FULL_LIST_HEIGHT {
-        let mut lines = view.identity();
-        lines.extend(view.server());
-        lines
-    } else {
-        view.compact()
-    };
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    frame.render_widget(Paragraph::new(view.line()), inner);
 }
 
-/// The trends pane: the largest tables of the connected database, as bars.
-/// It is read-only and never takes focus.
+/// The trends pane: the largest tables of the connected database as bars,
+/// then the server numbers. It is read-only and never takes focus.
+///
+/// The numbers are for the connected database only. CPU and memory are shared
+/// by every database on the server and PostgreSQL cannot report them, so the
+/// shared resource shown is the server's connection limit.
 fn draw_trends(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
     let value = Style::new().fg(theme.value);
     let block = Block::bordered()
-        .title(" Trends: largest tables ")
+        .title(" Trends ")
         .border_style(dim)
         .title_style(dim);
     let inner = block.inner(area);
@@ -260,16 +303,44 @@ fn draw_trends(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         return;
     };
     let Some(stats) = &conn.stats else {
-        let text = if conn.status == ConnStatus::Connected {
-            "Reading…"
-        } else {
-            "Not connected"
+        let line = match (&conn.status, &conn.stats_error) {
+            (ConnStatus::Connected, Some(e)) => Line::styled(
+                format!("Statistics unavailable: {e}"),
+                Style::new().fg(theme.error),
+            ),
+            (ConnStatus::Connected, None) => Line::styled("Reading…", dim),
+            _ => Line::styled("Not connected", dim),
         };
-        frame.render_widget(Paragraph::new(Line::styled(text, dim)), inner);
+        frame.render_widget(Paragraph::new(line), inner);
         return;
     };
-    // Five rows fit exactly, so the title does the work of a heading.
+    let label = Style::new().fg(theme.label);
     let mut lines = Vec::new();
+    let labelled = |name: &str, text: String, style: Style| {
+        Line::from(vec![
+            Span::styled(format!("{name:<12}"), label),
+            Span::styled(text, style),
+        ])
+    };
+    let connections_style = if SessionView::crowded(stats) {
+        Style::new().fg(theme.warn).add_modifier(Modifier::BOLD)
+    } else {
+        value
+    };
+    lines.push(labelled(
+        "Connections",
+        SessionView::connections_text(stats),
+        connections_style,
+    ));
+    lines.push(labelled(
+        "Activity",
+        SessionView::activity_text(stats),
+        value,
+    ));
+    lines.push(labelled("Size", SessionView::size_text(stats), value));
+    lines.push(labelled("Health", SessionView::age_text(stats), value));
+    lines.push(labelled("Deadlocks", stats.deadlocks.to_string(), value));
+    lines.push(Line::styled("Largest tables", label));
     if stats.top_tables.is_empty() {
         lines.push(Line::styled("No tables to show", dim));
     }
@@ -305,9 +376,6 @@ fn draw_trends(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Inside the session pane, tall enough to list identity and server in full.
-const FULL_LIST_HEIGHT: u16 = 11;
-
 struct SessionView<'a> {
     theme: &'a Theme,
     conn: &'a Connection,
@@ -341,10 +409,6 @@ impl<'a> SessionView<'a> {
         }
     }
 
-    fn dim(&self) -> Style {
-        Style::new().fg(self.theme.dimmed)
-    }
-
     fn label(&self) -> Style {
         Style::new().fg(self.theme.label)
     }
@@ -375,103 +439,63 @@ impl<'a> SessionView<'a> {
             .add_modifier(Modifier::BOLD)
     }
 
-    fn head(&self) -> Line<'static> {
+    /// `Session: name  Database: host:port, user, database  TLS off`. Production
+    /// and an open transaction come right after the name, so a narrow strip
+    /// cuts the address first.
+    fn line(&self) -> Line<'static> {
         let mut spans = vec![
+            Span::styled("Session: ", self.label()),
             Span::styled(
                 self.conn.profile.shown_name().to_string(),
                 self.value().add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                format!("  {}", status_word(&self.conn.status)),
-                self.status_style(),
-            ),
         ];
+        // A healthy connection needs no word. Anything else is named.
+        if self.conn.status != ConnStatus::Connected {
+            spans.push(Span::styled(
+                format!(" ({})", status_word(&self.conn.status)),
+                self.status_style(),
+            ));
+        }
         if self.conn.profile.production {
             spans.push(Span::styled("  PROD", self.alert()));
         }
-        Line::from(spans)
-    }
-
-    fn failure(&self) -> Option<Line<'static>> {
-        match &self.conn.status {
-            ConnStatus::Failed(m) | ConnStatus::Closed(m) => {
-                Some(Line::styled(m.clone(), Style::new().fg(self.theme.error)))
-            }
-            _ => None,
-        }
-    }
-
-    fn labelled(&self, label: &str, value: String) -> Line<'static> {
-        Line::from(vec![
-            Span::styled(format!("{label:<12}"), self.label()),
-            Span::styled(value, self.value_style(label)),
-        ])
-    }
-
-    fn value_style(&self, _label: &str) -> Style {
-        self.value()
-    }
-
-    /// A transaction left open is flagged until it ends (R16.2).
-    fn transaction(&self, with_key: bool) -> Option<Line<'static>> {
-        let text = match (self.conn.tx, with_key) {
-            (TxState::Idle, _) => return None,
-            (TxState::Open, _) => "open".to_string(),
-            (TxState::Failed, true) => format!("FAILED. {} rolls back", self.rollback_key),
-            (TxState::Failed, false) => "FAILED".to_string(),
+        let tx = match self.conn.tx {
+            TxState::Idle => None,
+            TxState::Open => Some("open".to_string()),
+            TxState::Failed => Some(format!("FAILED. {} rolls back", self.rollback_key)),
         };
-        Some(Line::from(vec![
-            Span::styled(format!("{:<12}", "Transaction"), self.label()),
-            Span::styled(text, self.alert()),
-        ]))
-    }
-
-    fn host_line(&self) -> Line<'static> {
-        let mut spans = vec![Span::styled(
-            match (&self.conn.status, &self.conn.info) {
-                (ConnStatus::Connected, Some(i)) => {
-                    format!(
-                        "{}:{}  PostgreSQL {}",
-                        self.host, self.port, i.server_version
-                    )
-                }
-                _ => format!("{}:{}", self.host, self.port),
-            },
-            self.dim(),
-        )];
-        if self.conn.info.as_ref().is_some_and(|i| !i.tls)
-            && self.conn.status == ConnStatus::Connected
-        {
-            spans.push(Span::styled("  TLS off", self.warn()));
+        if let Some(tx) = tx {
+            spans.push(Span::styled("  Transaction: ", self.label()));
+            spans.push(Span::styled(tx, self.alert()));
+        }
+        spans.push(Span::styled("  Database: ", self.label()));
+        spans.push(Span::styled(
+            format!(
+                "{}:{}, {}, {}",
+                self.host, self.port, self.user, self.database
+            ),
+            self.value(),
+        ));
+        if self.conn.status == ConnStatus::Connected {
+            match self.conn.info.as_ref().map(|i| i.tls) {
+                Some(false) => spans.push(Span::styled("  TLS off", self.warn())),
+                Some(true) => spans.push(Span::styled("  TLS on", self.value())),
+                None => {}
+            }
+        }
+        if let ConnStatus::Failed(m) | ConnStatus::Closed(m) = &self.conn.status {
+            spans.push(Span::styled(
+                format!("  {m}"),
+                Style::new().fg(self.theme.error),
+            ));
         }
         Line::from(spans)
-    }
-
-    /// Why there are no numbers, or `None` when there are.
-    fn no_stats(&self) -> Option<Line<'static>> {
-        if self.conn.status != ConnStatus::Connected {
-            return None;
-        }
-        match (&self.conn.stats, &self.conn.stats_error) {
-            (Some(_), _) => None,
-            (None, Some(e)) => Some(Line::styled(
-                format!("Statistics unavailable: {e}"),
-                Style::new().fg(self.theme.error),
-            )),
-            (None, None) => Some(Line::styled("Reading statistics…", self.dim())),
-        }
     }
 
     fn connections_text(s: &SessionStats) -> String {
         format!(
             "{} here · {} of {} on server",
-            s.connections, s.server_connections, s.max_connections
-        )
-    }
-
-    fn connections_short(s: &SessionStats) -> String {
-        format!(
-            "{} here · {}/{} on server",
             s.connections, s.server_connections, s.max_connections
         )
     }
@@ -503,70 +527,7 @@ impl<'a> SessionView<'a> {
             (None, true) => "none".to_string(),
             (None, false) => "n/a".to_string(),
         };
-        format!(
-            "oldest tx {oldest} · up {} · deadlocks {}",
-            format_age(s.uptime_secs),
-            s.deadlocks
-        )
-    }
-
-    /// Left column: who you are.
-    fn identity(&self) -> Vec<Line<'static>> {
-        let mut lines = vec![self.head()];
-        lines.extend(self.failure());
-        lines.push(self.labelled("Database", self.database.clone()));
-        lines.push(self.labelled("User", self.user.clone()));
-        lines.extend(self.transaction(false));
-        lines
-    }
-
-    /// Right column: the server and how busy this database is.
-    fn server(&self) -> Vec<Line<'static>> {
-        let mut lines = vec![self.host_line()];
-        if let Some(s) = &self.conn.stats {
-            let style = if Self::crowded(s) {
-                self.warn()
-            } else {
-                Style::new()
-            };
-            lines.push(Line::from(vec![
-                Span::styled(format!("{:<12}", "Connections"), self.label()),
-                Span::styled(Self::connections_text(s), style),
-            ]));
-            lines.push(self.labelled("Activity", Self::activity_text(s)));
-            lines.push(self.labelled("Size", Self::size_text(s)));
-            lines.push(self.labelled("Health", Self::age_text(s)));
-        }
-        lines.extend(self.no_stats());
-        lines
-    }
-
-    /// One column, for a narrow pane. Most useful first, so a short pane
-    /// cuts the least important.
-    fn compact(&self) -> Vec<Line<'static>> {
-        let mut lines = vec![self.head()];
-        lines.extend(self.failure());
-        lines.push(Line::from(vec![
-            Span::styled(self.database.clone(), self.value()),
-            Span::styled(" · ", self.dim()),
-            Span::styled(self.user.clone(), self.value()),
-        ]));
-        lines.extend(self.transaction(true));
-        if let Some(s) = &self.conn.stats {
-            let style = if Self::crowded(s) {
-                self.warn()
-            } else {
-                Style::new()
-            };
-            lines.push(Line::styled(
-                format!("Conns {}", Self::connections_short(s)),
-                style,
-            ));
-            lines.push(Line::styled(Self::size_text(s), Style::new()));
-        }
-        lines.extend(self.no_stats());
-        lines.push(self.host_line());
-        lines
+        format!("oldest tx {oldest} · up {}", format_age(s.uptime_secs))
     }
 }
 
@@ -1032,11 +993,7 @@ fn draw_editor(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
             cell += width;
         }
         spans.extend(builder.finish());
-        let mut line = Line::from(spans);
-        if index == cursor.line {
-            line = line.style(Style::new().bg(theme.cursor_line_bg));
-        }
-        rows.push(line);
+        rows.push(Line::from(spans));
     }
 
     let body = Rect {
@@ -2114,8 +2071,8 @@ mod tests {
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
-        // The left column runs results above the editor. The right column runs
-        // session above context, to the right of the left column.
+        // The left column runs session, results, then the editor. The context
+        // is on the right of the left column.
         let at = |title: &str| {
             out.lines()
                 .enumerate()
@@ -2124,8 +2081,8 @@ mod tests {
         };
         let (results, editor) = (at("Results"), at("Editor"));
         let (session, context) = (at("Session"), at("Context"));
-        assert!(results.0 < editor.0 && session.0 < context.0, "{out}");
-        assert!(session.1 > results.1 && context.1 > editor.1, "{out}");
+        assert!(session.0 < results.0 && results.0 < editor.0, "{out}");
+        assert!(session.1 == results.1 && context.1 > editor.1, "{out}");
         assert_snapshot("landing_80x24", &out);
     }
 
@@ -2237,9 +2194,8 @@ mod tests {
         let a = connected_app(90, 24);
         let out = render(&a, 90, 24);
         for expected in [
-            "Session",
-            "app · alice",
-            "127.0.0.1:5432  PostgreSQL 16.2",
+            "Session: ",
+            "Database: 127.0.0.1:5432,",
             "Buffer     Buffer 1",
             "Statement  none under the cursor",
         ] {
@@ -2300,7 +2256,7 @@ mod tests {
         a.state.connection_mut_for_tests(conn).tx = crate::db::TxState::Failed;
         let out = render(&a, 90, 24);
         assert!(
-            out.contains("Transaction FAILED.") && out.contains("Alt+Z rolls"),
+            out.contains("Transaction: FAILED.") && out.contains("Alt+Z rolls back"),
             "{out}"
         );
         assert!(out.contains("TX FAILED"), "{out}");
@@ -2332,35 +2288,23 @@ mod tests {
     }
 
     #[test]
-    fn a_tall_session_pane_lists_the_identity_and_the_server_numbers() {
+    fn the_session_strip_names_the_connection_and_the_trends_list_the_server_numbers() {
         let a = with_stats(160, 40, sample_stats());
         let out = render(&a, 160, 40);
         for expected in [
-            "Database    app",
-            "User        alice",
-            "127.0.0.1:5432  PostgreSQL 16.2",
+            "Session: ",
+            "Database: 127.0.0.1:5432, alice, app",
+            "TLS off",
+            "Largest tables",
             "Connections 3 here · 12 of 100",
             "Activity    1 active · 0 idle in",
             "Size        1.2 GB · cache hit 99.2%",
             "Health      oldest tx 12s",
+            "Deadlocks   0",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
         assert_snapshot("session_tall_160x40", &out);
-    }
-
-    #[test]
-    fn a_narrow_session_pane_keeps_the_numbers_that_matter() {
-        let a = with_stats(90, 24, sample_stats());
-        let out = render(&a, 90, 24);
-        for expected in [
-            "app · alice",
-            "Conns 3 here · 12/100",
-            "1.2 GB · cache hit 99.2%",
-        ] {
-            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
-        }
-        assert_snapshot("session_compact_90x24", &out);
     }
 
     #[test]
@@ -2374,14 +2318,15 @@ mod tests {
             assert_eq!(results.x, editor.x);
             assert_eq!(results.width, editor.width);
 
+            // The session strip heads the left column.
             let (session, context) = (areas.session.expect("s"), areas.context.expect("c"));
-            assert_eq!(session.bottom(), context.y, "{width}x{height}");
-            assert_eq!(session.x, context.x);
-            assert_eq!(session.width, context.width);
-            assert!(session.x >= results.right(), "right column is on the right");
+            assert_eq!(session.bottom(), results.y, "{width}x{height}");
+            assert_eq!(session.x, results.x);
+            assert_eq!(session.width, results.width);
+            assert!(context.x >= results.right(), "right column is on the right");
             if let Some(trends) = areas.trends {
                 assert_eq!(context.bottom(), trends.y);
-                assert_eq!(trends.x, session.x);
+                assert_eq!(trends.x, context.x);
                 assert_eq!(trends.bottom(), editor.bottom());
             } else {
                 assert_eq!(context.bottom(), editor.bottom());
@@ -2391,8 +2336,8 @@ mod tests {
 
     #[test]
     fn trends_are_left_out_when_the_right_column_is_too_short() {
-        let a = connected_app(100, 20);
-        let areas = layout::compute(Rect::new(0, 0, 100, 20), &a.state, &a.config);
+        let a = connected_app(100, 19);
+        let areas = layout::compute(Rect::new(0, 0, 100, 19), &a.state, &a.config);
         assert!(areas.trends.is_none());
         assert!(areas.session.is_some() && areas.context.is_some());
         let tall = connected_app(100, 40);
@@ -2840,7 +2785,8 @@ mod tests {
         let a = with_stats(160, 24, stats);
         let out = render(&a, 160, 24);
         for expected in [
-            "Trends: largest tables",
+            "Trends",
+            "Largest tables",
             "events",
             "archive.orders_2023",
             "858.3 MB",
@@ -2858,8 +2804,8 @@ mod tests {
 
     #[test]
     fn a_short_terminal_does_not_draw_the_trends() {
-        let a = with_stats(130, 20, sample_stats());
-        assert!(!render(&a, 130, 20).contains("┌ Trends"));
+        let a = with_stats(130, 19, sample_stats());
+        assert!(!render(&a, 130, 19).contains("┌ Trends"));
     }
 
     #[test]

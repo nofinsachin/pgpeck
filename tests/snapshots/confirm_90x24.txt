@@ -1,16 +1,16 @@
-┌ Results ───────────────────────────────────────────┐┌ Session ─────────────────────────┐
-│                                                    ││127.0.0.1  connected  PROD        │
-│                                                    ││app · alice                       │
-│                                                    ││Reading statistics…               │
-│                                                    ││127.0.0.1:5432  PostgreSQL 16.2   │
-│                                                    ││TLS off                           │
-│        ┌────────────────────────────── Confirm ───────────────────────────────┐────────┘
-│        │Connection  127.0.0.1  PROD                                           │────────┐
+┌ Session ───────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│Session: 127.0.0.1  PROD  Database: 127.0.0.1:5432, ││Buffer     Buffer 1               │
+└────────────────────────────────────────────────────┘│Statement  delete from orders     │
+┌ Results ───────────────────────────────────────────┐│                                  │
+│                                                    │└──────────────────────────────────┘
+│                                                    │┌ Trends ──────────────────────────┐
+│        ┌────────────────────────────── Confirm ───────────────────────────────┐        │
+│        │Connection  127.0.0.1  PROD                                           │        │
 │        │                                                                      │        │
-│        │  delete from orders                                                  │ers     │
+│        │  delete from orders                                                  │        │
 │        │                                                                      │        │
-│        │This is a production connection and the statement changes data.       │────────┘
-│        │UPDATE or DELETE without WHERE changes every row.                     │────────┐
+│        │This is a production connection and the statement changes data.       │        │
+│        │UPDATE or DELETE without WHERE changes every row.                     │        │
 │        │                                                                      │        │
 │No resul│Run it? Type y or yes:                                                │        │
 └────────│Enter run (after y or yes)  Esc cancel                                │        │

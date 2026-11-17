@@ -1,17 +1,17 @@
-┌ Results ─────────────────────────────────┐┌ Session ─────────────────────────┐
+┌ Session ─────────────────────────────────┐┌ Context ─────────────────────────┐
+│Not connected                             ││Welcome to pgpeck.                │
+└──────────────────────────────────────────┘│Press C to connect to a database. │
+┌ Results ─────────────────────────────────┐│Press Esc for commands.           │
+│                                          │└──────────────────────────────────┘
+│                                          │┌ Trends ──────────────────────────┐
 │                                          ││Not connected                     │
 │                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
-│                                          │└──────────────────────────────────┘
-│                                          │┌ Context ─────────────────────────┐
-│                                          ││Welcome to pgpeck.                │
-│                                          ││Press C to connect to a database. │
-│                                          ││Press Esc for commands.           │
-│                                          │└──────────────────────────────────┘
-│                                          │┌ Trends: largest tables ──────────┐
-│                                          ││Not connected                     │
+│                                          ││                                  │
+│                                          ││                                  │
+│                                          ││                                  │
 │No┌────────────┐Run with Ctrl+R.          ││                                  │
 └──│  desc    kw│──────────────────────────┘│                                  │
 ┌ ▶│▶ delete  kw│──────────────────────────┐│                                  │

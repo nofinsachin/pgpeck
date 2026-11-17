@@ -32,7 +32,6 @@ const ROLES: &[&str] = &[
     "border",
     "background",
     "line_number",
-    "cursor_line_bg",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +56,6 @@ pub struct Theme {
     pub border: Color,
     pub background: Color,
     pub line_number: Color,
-    pub cursor_line_bg: Color,
 }
 
 impl Theme {
@@ -131,7 +129,6 @@ impl Theme {
             border: get("border", base.border),
             background: get("background", base.background),
             line_number: get("line_number", base.line_number),
-            cursor_line_bg: get("cursor_line_bg", base.cursor_line_bg),
         };
         (theme, diags)
     }
@@ -160,7 +157,6 @@ impl Theme {
             border: Color::Reset,
             background: Color::Reset,
             line_number: Color::Reset,
-            cursor_line_bg: Color::Reset,
         }
     }
 }

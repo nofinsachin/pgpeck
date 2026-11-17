@@ -10,20 +10,21 @@ use crate::config::Config;
 /// requirements. Below it, one pane is shown at a time (R20.5).
 pub const MIN_SIZE: (u16, u16) = (60, 15);
 
-/// The right column holds the session, the context and the trends, top to
-/// bottom. It takes this share of the width, within these limits.
+/// The right column holds the context and the trends, top to bottom. It takes this share of the width, within these limits.
 const SIDE_SHARE: u16 = 34;
 const SIDE_MIN_WIDTH: u16 = 36;
 const SIDE_MAX_WIDTH: u16 = 50;
 
-/// Heights in the right column, borders included. The context pane holds the
-/// welcome text before you connect, which is three lines.
+/// Heights, borders included. The context pane holds the welcome text before
+/// you connect, which is three lines. The trends pane needs 13 rows for its
+/// heading, five tables and five numbers, so it is left out below that.
 const CONTEXT_HEIGHT: u16 = 5;
-const TRENDS_MIN_HEIGHT: u16 = 7;
-const SESSION_MIN_HEIGHT: u16 = 7;
-/// Enough for the full identity and server numbers. Used when the column has
-/// room for it and the trends still get their minimum.
-const SESSION_FULL_HEIGHT: u16 = 13;
+const TRENDS_MIN_HEIGHT: u16 = 13;
+/// The logo above the context pane, shown when the column has room for it
+/// on top of everything else.
+pub const LOGO_HEIGHT: u16 = 7;
+/// The session strip above the results: one line of text and the borders.
+const SESSION_HEIGHT: u16 = 3;
 
 /// The editor is a strip at the bottom of the left column: this share of its
 /// height, and never less than `EDITOR_MIN_HEIGHT` (borders included).
@@ -37,6 +38,8 @@ pub struct Areas {
     pub editor: Option<Rect>,
     pub context: Option<Rect>,
     pub session: Option<Rect>,
+    /// The logo, above the context. Left out when the right column is short.
+    pub logo: Option<Rect>,
     /// Largest tables. Left out when the right column is too short.
     pub trends: Option<Rect>,
     pub results: Option<Rect>,
@@ -58,6 +61,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         editor: None,
         context: None,
         session: None,
+        logo: None,
         trends: None,
         results: None,
         hint,
@@ -87,6 +91,16 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         (body, None)
     };
 
+    // The session strip heads the left column, when there is room for it.
+    let left = if state.show_context && left.height >= SESSION_HEIGHT + 6 {
+        let [session, rest] =
+            Split::vertical([Constraint::Length(SESSION_HEIGHT), Constraint::Min(1)]).areas(left);
+        areas.session = Some(session);
+        rest
+    } else {
+        left
+    };
+
     let editor_height = (left.height * EDITOR_SHARE / 100).max(EDITOR_MIN_HEIGHT);
     if state.show_results {
         let [results, editor] = Split::vertical([
@@ -101,33 +115,26 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     }
 
     if let Some(side) = side {
-        let with_trends = state.show_trends
-            && side.height >= SESSION_MIN_HEIGHT + CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT;
+        let with_trends = state.show_trends && side.height >= CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT;
+        let needed = CONTEXT_HEIGHT + if with_trends { TRENDS_MIN_HEIGHT } else { 0 };
+        let side = if side.height >= LOGO_HEIGHT + needed {
+            let [logo, rest] =
+                Split::vertical([Constraint::Length(LOGO_HEIGHT), Constraint::Min(0)]).areas(side);
+            areas.logo = Some(logo);
+            rest
+        } else {
+            side
+        };
         if with_trends {
-            // The trends take what the session and context leave.
-            let session_height =
-                if side.height >= SESSION_FULL_HEIGHT + CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT {
-                    SESSION_FULL_HEIGHT
-                } else {
-                    SESSION_MIN_HEIGHT
-                };
-            let [session, context, trends] = Split::vertical([
-                Constraint::Length(session_height),
+            let [context, trends] = Split::vertical([
                 Constraint::Length(CONTEXT_HEIGHT),
                 Constraint::Min(TRENDS_MIN_HEIGHT),
             ])
             .areas(side);
-            areas.session = Some(session);
             areas.context = Some(context);
             areas.trends = Some(trends);
         } else {
-            let [session, context] = Split::vertical([
-                Constraint::Min(SESSION_MIN_HEIGHT.min(side.height.saturating_sub(CONTEXT_HEIGHT))),
-                Constraint::Length(CONTEXT_HEIGHT.min(side.height)),
-            ])
-            .areas(side);
-            areas.session = Some(session);
-            areas.context = Some(context);
+            areas.context = Some(side);
         }
     }
     areas

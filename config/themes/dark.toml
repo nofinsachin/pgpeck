@@ -1,27 +1,26 @@
-# Dark theme in the PostgreSQL palette: one dark grey background everywhere,
-# white text, and a single light blue (derived from #008bb9, which is too dark
-# to read on grey) for every blue element: keywords, focus, labels and the
-# column header. Error, warning and production keep red and orange tints.
+# Dark theme following postgresql.org's dark mode (its stylesheet, dyncss/base.css):
+# #212121 background, #f3f5f9 text, #2e2e2e and #4a4a4a for raised areas,
+# #008bb9 for blue text and #699eca (the site's dark-mode link blue) for focus
+# and the column header. One background everywhere.
 # Colors are names or #rrggbb.
 # Focus, errors and NULL are never conveyed by color alone (R20.9).
-focus = "#9bdcf5"
-error = "#ffb3a7"
-null = "#c4c4c4"
-dimmed = "#d0d0d0"
-keyword = "#9bdcf5"
-number = "#ffffff"
-string = "#d0d0d0"
+focus = "#699eca"
+error = "#ff8882"          # the site's "no" red
+null = "#8a8a8a"
+dimmed = "#b0b0b0"
+keyword = "#008bb9"
+number = "#f3f5f9"
+string = "#d4d4d4"
 status_prod = "#c8321f"
-status_fg = "#ffffff"
-status_bg = "#4a4a4a"
-header_fg = "#9bdcf5"
-header_bg = "#4a4a4a"
-row_alt_bg = "#404040"
-ok = "#ffffff"
+status_fg = "#f3f5f9"
+status_bg = "#212121"
+header_fg = "#699eca"
+header_bg = "#212121"
+row_alt_bg = "#2e2e2e"
+ok = "#f3f5f9"
 warn = "#ffc27a"
-label = "#9bdcf5"
-value = "#ffffff"
-line_number = "#c4c4c4"
-cursor_line_bg = "#555555"
-background = "#4a4a4a"
-border = "#000000"
+label = "#008bb9"
+value = "#f3f5f9"
+line_number = "#848484"
+background = "#212121"
+border = "#6b6b6b"

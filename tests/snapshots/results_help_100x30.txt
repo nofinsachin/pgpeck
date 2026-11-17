@@ -1,22 +1,22 @@
-┌ ▶ Results ───────────────────────────────────────────────────┐┌ Session ─────────────────────────┐
-│                                                              ││Not connected                     │
-│            ┌───────────────────────────────── Help ─────────────────────────────────┐            │
-│            │results keys                                                            │            │
-│            │  ?                 help                  help.toggle                   │            │
-│            │  Down              row down              results.scroll_down           │            │
-│            │  End               last row              results.last_row              │            │
-│            │  Home              first row             results.first_row             │            │
+┌ Session ─────────────────────────────────────────────────────┐                ▄▄▄▄▄▄▄
+│Not connected                                                 │             ▄██████████▄
+└────────────┌───────────────────────────────── Help ─────────────────────────────────┐▀██
+┌ ▶ Results ─│results keys                                                            │███
+│            │  ?                 help                  help.toggle                   │█▀
+│            │  Down              row down              results.scroll_down           │
+│            │  End               last row              results.last_row              │
+│            │  Home              first row             results.first_row             │────────────┐
 │            │  Left              columns left          results.scroll_left           │            │
-│            │  PageDown          page down             results.page_down             │            │
-│            │  PageUp            page up               results.page_up               │            │
-│            │  Right             columns right         results.scroll_right          │            │
-│            │  Up                row up                results.scroll_up             │────────────┘
-│            │  [                 previous result       results.prev_tab              │────────────┐
+│            │  PageDown          page down             results.page_down             │a database. │
+│            │  PageUp            page up               results.page_up               │mmands.     │
+│            │  Right             columns right         results.scroll_right          │────────────┘
+│            │  Up                row up                results.scroll_up             │────────────┐
+│            │  [                 previous result       results.prev_tab              │            │
 │            │  ]                 next result           results.next_tab              │            │
-│            │  c                 connect               connection.open               │a database. │
-│            │  e                 edit                  focus.editor                  │mmands.     │
-│            │  q                 quit                  app.quit                      │────────────┘
-│            │  r                 run                   query.run_statement           │s ──────────┐
+│            │  c                 connect               connection.open               │            │
+│            │  e                 edit                  focus.editor                  │            │
+│            │  q                 quit                  app.quit                      │            │
+│            │  r                 run                   query.run_statement           │            │
 │No results y│                                                                        │            │
 └────────────│global keys                                                             │            │
 ┌ Editor ────│  Alt+1             focus context         focus.context                 │            │

@@ -2,10 +2,54 @@
 
 A fast, keyboard-driven terminal client for PostgreSQL, written in Rust.
 
-Status: early development. You can connect to a database, run statements and
-read the results. You can also find tables, views, columns, functions, types and schemas by name. Not done yet: TLS
-(`ssl_mode` defaults to `disable`; remote hosts refuse `prefer`), paged result browsing, the
-relationship view, the context strip and history.
+<!-- Screenshots and a demo video go here. -->
+
+## Status
+
+Early development. You can connect, write and run SQL, read results, and find schema objects by
+name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refuse `prefer`),
+paged result browsing, the relationship view and query history.
+
+## What it does
+
+- **Connect** to a saved profile, a `postgres://` address, or a new set of details. pgpeck never
+  stores a password.
+- **Edit and run** SQL with syntax colors, completion, multiple buffers and bracket matching.
+  `Ctrl+R` runs the statement under the cursor, or the selection.
+- **Read results** in a grid with a header, column separators and row banding. A summary line
+  (rows and time) sits under the results.
+- **Find** tables, views, columns, functions, types and schemas by name with `Ctrl+P`.
+- **Stay safe.** Risky statements wait for a typed `y` or `yes`. The session strip and the status
+  bar flag open and failed transactions.
+- **Watch the database.** The Trends pane shows connections, activity, size, health, deadlocks and
+  the five largest tables.
+
+## The screen
+
+```
+┌ Session ──────────────────────────────────────┐   ▄▄▄▄▄▄▄ (logo)      
+│Session: name  Database: host:port, user, db   │┌ Context ────────────┐
+└───────────────────────────────────────────────┘│Buffer, Statement    │
+┌ Results ──────────────────────────────────────┐└─────────────────────┘
+│column header │ column header                  │┌ Trends ─────────────┐
+│rows ...                                       ││Connections          │
+│SELECT 2  ·  2 rows  ·  3 ms                   ││Activity             │
+│                                               ││Size, Health         │
+└───────────────────────────────────────────────┘│Deadlocks            │
+┌ Editor ───────────────────────────────────────┐│Largest tables       │
+│select ...                                     ││                     │
+│                                               │└─────────────────────┘
+│                                               │
+└───────────────────────────────────────────────┘
+ hint bar
+ status bar
+```
+
+- **Session** (top left): the connection's name, where it points (host, user, database) and TLS.
+  Production, open transactions and failures are flagged here.
+- **Results** above the **Editor**, in the left column.
+- **Context** and **Trends** in the right column. The logo sits above Context on tall terminals.
+  Trends needs about 18 rows, or 25 with the logo, and is left out below that.
 
 ## Build and run
 
@@ -16,7 +60,7 @@ cargo run -- --check-config
 
 ## Try it against a database
 
-Start a throwaway PostgreSQL (bound to localhost only):
+Start a throwaway PostgreSQL, bound to localhost only:
 
 ```
 docker run -d --name pgpeck-pg -e POSTGRES_USER=demo -e POSTGRES_PASSWORD=demo \
@@ -29,61 +73,75 @@ Then in pgpeck:
 1. Press `C`. Choose **New connection**, type the details (host `127.0.0.1`, port `54329`,
    database `demo`, user `demo`) and press `Enter`. Or paste
    `postgres://demo@127.0.0.1:54329/demo` in the box instead.
-2. Type the password when asked (`demo`). pgpeck never stores passwords. It asks every time.
+2. Type the password when asked (`demo`).
 3. You land in the editor. Type `select now(), null as nothing;` and press `Ctrl+R`.
 
-The keys, all shown on screen:
+Remove the container with `docker rm -f pgpeck-pg`.
+
+## Keys
+
+`F1` lists every key. The main ones:
 
 | Where | Key | Does |
 |---|---|---|
-| Context pane (top left, where you start) | `C` | connect |
+| Context pane (where you start) | `C` | connect |
 | | `F` | find a table, view, column, function, type or schema |
 | | `R` | run the statement under the cursor |
 | | `E` or `Enter` | go to the editor |
 | | `N` | new buffer |
 | | `Q` | quit |
 | | `?` | help |
-| Session pane (top right, `Alt+4` or `Tab`) | `D` or `Enter` | change the database (reconnects) |
+| Session strip (`Alt+4`) | `D` or `Enter` | change the database (reconnects) |
 | | `U` | change the user (reconnects) |
-| | `F5` | refresh the numbers now |
-| | `Esc` | back to the context pane |
+| | `F5` | refresh the Trends numbers now |
 | | `Z` | roll back an open or failed transaction |
-| Any pane | `F7` | show or hide the Trends pane (the five largest tables, below the context. It needs a terminal at least 21 rows tall) |
-| Any pane | `Ctrl+P` | find a schema object (the Find window) |
-| Find window | `Enter` | put the object's name in the editor, as listed, and copy it |
-| | `Alt+T` `V` `M` `O` `F` `Y` `N` | show only tables, views, materialized views, foreign tables, functions, types or schemas. Press again to show all |
-| | `Alt+C` | on a table or view: list only its columns. Press again to go back |
-| | `Alt+Z` | relationship view (not built yet) |
-| | `Alt+S` | on a table or view: add `SELECT * ... LIMIT 100` and run it |
-| | `Esc` | close, changing nothing |
-| Any pane | `Alt+Z` | roll back an open or failed transaction |
+| | `Esc` | back to the context pane |
+| Any pane | `Ctrl+P` | open the Find window |
+| | `Alt+Z` | roll back an open or failed transaction |
+| | `F7` | show or hide Trends |
+| | `F3` / `F4` | show or hide the right column / the results |
+| | `Tab`, `F6` | next pane |
 | Editor | `Ctrl+R` | run the statement under the cursor, or the selection |
-| | `Esc` | back to the commands pane |
 | | `Ctrl+C` | cancel a running statement |
-| Results | `C` `R` `E` `Q` | as above, plus arrows, `[` and `]` to move |
+| | `Esc` | back to the context pane |
+| Results | arrows, `[` and `]` | move |
+| Find window | `Enter` | put the object's name in the editor and copy it |
+| | `Alt+T` `V` `M` `O` `F` `Y` `N` | show only tables, views, materialized views, foreign tables, functions, types or schemas. Press again to show all |
+| | `Alt+C` | on a table or view: list only its columns |
+| | `Alt+S` | on a table or view: add `SELECT * ... LIMIT 100` and run it |
+| | `Alt+Z` | relationship view (not built yet) |
+| | `Esc` | close, changing nothing |
 | Connect window | `Ctrl+E` | edit the selected saved connection |
-| | type | search profiles, or paste a `postgres://` address |
 | | `Ctrl+S` | save the typed address as a profile (no password) |
 
-Before a risky statement runs, pgpeck shows it with the connection name and waits for `y` or
-`yes` (Enter alone does nothing). That applies to any change on a production connection, to
-`UPDATE` or `DELETE` without `WHERE`, and to `DROP` or `TRUNCATE`. The status bar and the Session
-pane show `TX OPEN` or `TX FAILED` while a transaction is open.
+## Safety
 
-The Session pane shows the connected database only: its connections, active and idle-in-transaction
-sessions, size, cache hit rate, oldest open transaction and deadlocks, next to the server's
-connection count and limit, which every database on the server shares. CPU and memory are not
-shown, because PostgreSQL does not tell a client about them. The numbers refresh every
-`session.refresh_seconds` (default 10, 0 turns it off) and after each statement. They are read on
-your own connection, so never while a statement runs or a transaction is open. Seeing other
-roles' sessions needs the `pg_read_all_stats` role.
+Before a risky statement runs, pgpeck shows it with the connection name and waits for `y` or
+`yes`. Enter alone does nothing. That applies to:
+
+- any change on a production connection,
+- `UPDATE` or `DELETE` without `WHERE`,
+- `DROP` and `TRUNCATE`.
+
+The session strip and the status bar show an open or failed transaction.
+
+## Trends
+
+Trends shows the connected database only, in this order: connections, activity, size and cache
+hit rate, health (oldest open transaction and uptime), deadlocks, then the five largest tables.
+The connection count and limit are for the whole server, which every database on it shares. CPU
+and memory are not shown, because PostgreSQL does not tell a client about them.
+
+The numbers refresh every `session.refresh_seconds` (default 10, `0` turns it off) and after each
+statement. They are read on your own connection, so never while a statement runs or a transaction
+is open. Seeing other roles' sessions needs the `pg_read_all_stats` role.
+
+## Connections and passwords
 
 Naming a connection in the details form saves it as a profile in
-`~/.config/pgpeck/connections.toml`, without a password. It is listed next time.
-To let pgpeck read a password you already keep in `~/.pgpass` or `$PGPASSWORD`,
-see `password_sources` in `config/default.toml`.
-
-`F1` lists every key. Remove the container with `docker rm -f pgpeck-pg`.
+`~/.config/pgpeck/connections.toml`, without a password. It is listed next time. pgpeck asks for
+the password every time. To let it read one you already keep in `~/.pgpass` or `$PGPASSWORD`, see
+`password_sources` in [`config/default.toml`](config/default.toml).
 
 ## Configuration
 
@@ -91,10 +149,11 @@ Files live in `$XDG_CONFIG_HOME/pgpeck` (usually `~/.config/pgpeck`):
 
 - `config.toml`: see [`config/default.toml`](config/default.toml) for every option.
 - `keymap.toml`: laid over [`config/keymap.default.toml`](config/keymap.default.toml).
-- `themes/<name>.toml`: see [`config/themes`](config/themes).
+- `themes/<name>.toml`: see [`config/themes`](config/themes). The dark theme follows
+  postgresql.org's dark mode. A light theme is built in too.
 
-`pgpeck --check-config` validates all three and exits non-zero on problems.
-Logs go to `$XDG_STATE_HOME/pgpeck` (set `PGPECK_LOG=debug` for more).
+`pgpeck --check-config` validates all three and exits non-zero on problems. Logs go to
+`$XDG_STATE_HOME/pgpeck` (set `PGPECK_LOG=debug` for more).
 
 ## Development
 
@@ -105,8 +164,8 @@ cargo test
 ```
 
 Tests named `pg_*` need a PostgreSQL and skip themselves without one. Point them at one with
-`PGPECK_TEST_DATABASE_URL=postgres://user:password@127.0.0.1:5432/db cargo test`.
-CI runs them against a `postgres:16` service.
+`PGPECK_TEST_DATABASE_URL=postgres://user:password@127.0.0.1:5432/db cargo test`. CI runs them
+against a `postgres:16` service.
 
-Screen snapshots live in `tests/snapshots`. Rewrite them with
-`UPDATE_SNAPSHOTS=1 cargo test`. Requirements are in `.kiro/specs/requirements.md`.
+Screen snapshots live in `tests/snapshots`. Rewrite them with `UPDATE_SNAPSHOTS=1 cargo test`.
+Requirements are in [`.kiro/specs/requirements.md`](.kiro/specs/requirements.md).
