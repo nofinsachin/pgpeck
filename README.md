@@ -7,8 +7,8 @@ A fast, keyboard-driven terminal client for PostgreSQL, written in Rust.
 ## Status
 
 Early development. You can connect, write and run SQL, read results, and find schema objects by
-name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refuse `prefer`),
-and the relationship view.
+name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refuse `prefer`).
+
 
 ## What it does
 
@@ -22,6 +22,8 @@ and the relationship view.
   past the edge of the loaded rows, or press `Home` or `End`, and pgpeck reads that part of the
   result from the server.
 - **Go back** to what you ran. `Alt+H` lists your statements, newest first, and searches them.
+- **Follow foreign keys.** From a table in the Find window, `Alt+Z` shows what it points to and what
+  points to it. You can walk from table to table and put a ready-made `JOIN` in the editor.
 - **Find** tables, views, columns, functions, types and schemas by name with `Ctrl+P`.
 - **Stay safe.** Risky statements wait for a typed `y` or `yes`. The session strip and the status
   bar flag open and failed transactions.
@@ -118,7 +120,12 @@ Remove the container with `docker rm -f pgpeck-pg`.
 | | `Alt+T` `V` `M` `O` `F` `Y` `N` | show only tables, views, materialized views, foreign tables, functions, types or schemas. Press again to show all |
 | | `Alt+C` | on a table or view: list only its columns |
 | | `Alt+S` | on a table or view: add `SELECT * ... LIMIT 100` and run it |
-| | `Alt+Z` | relationship view (not built yet) |
+| | `Alt+Z` | on a table or view: the relationship view |
+| Relationship view | `Enter` | show the table on the other end of the selected key |
+| | `Backspace` | back to the table you came from |
+| | `J` | put a `JOIN` to the selected table in the editor |
+| | `S` | select sample rows of the selected table |
+| | `Esc` | close |
 | | `Esc` | close, changing nothing |
 | Connect window | `Ctrl+E` | edit the selected saved connection |
 | | `Ctrl+S` | save the typed address as a profile (no password) |
@@ -133,6 +140,16 @@ Before a risky statement runs, pgpeck shows it with the connection name and wait
 - `DROP` and `TRUNCATE`.
 
 The session strip and the status bar show an open or failed transaction.
+
+## Relationships
+
+In the Find window, select a table or view and press `Alt+Z`. The window lists the foreign keys
+that leave the table ("References") and the ones that enter it ("Referenced by"), with the
+columns on both sides. `Enter` shows the table on the other end, so you can walk through the
+schema, and `Backspace` goes back. `J` puts a ready-made `JOIN … ON …` to the selected table at
+the end of the editor (composite keys join on every column), and `S` selects sample rows of it.
+The keys come from the schema read when you connect. They refresh after a statement that changes
+the schema.
 
 ## History
 

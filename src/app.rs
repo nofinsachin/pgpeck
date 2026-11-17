@@ -18,6 +18,7 @@ use crate::keymap::{Action, KeyChord, Keymap, Scope};
 use crate::layout;
 use crate::picker::{self, Picker};
 use crate::profile::{self, Profile, Profiles};
+use crate::relations;
 use crate::results::{PageRequest, Results};
 use crate::secrets::{Secret, Source};
 use crate::sql;
@@ -161,6 +162,8 @@ pub enum Dialog {
     Find(Picker),
     /// The statements run before. It reuses the picker's input and selection.
     History(Picker),
+    /// The foreign keys of one table.
+    Relations(relations::View),
     /// Connection details typed by hand.
     Form(ConnectForm),
     /// Database and user of the current connection.
@@ -845,7 +848,9 @@ impl App {
             | Action::FindSample
             | Action::FindJump(_)
             | Action::FindColumns
-            | Action::FindRelations => {}
+            | Action::FindRelations
+            | Action::RelationJoin
+            | Action::RelationSample => {}
             Action::FindOpen => self.open_find(),
             Action::HistoryOpen => self.open_history(),
             Action::CompletionTrigger => self.refresh_completion(true),
@@ -926,6 +931,57 @@ impl App {
         c.catalog_busy = true;
         self.pending.push(Command::Catalog { conn });
         true
+    }
+
+    /// The foreign keys of the table the view shows. Empty before the schema
+    /// has been read.
+    pub fn relation_links<'a>(
+        connections: &'a [Connection],
+        conn: Option<ConnId>,
+        view: &relations::View,
+    ) -> Vec<relations::Link<'a>> {
+        conn.and_then(|id| connections.iter().find(|c| c.id == id))
+            .and_then(|c| c.catalog.as_ref())
+            .map_or_else(Vec::new, |catalog| view.links(catalog))
+    }
+
+    /// J puts a JOIN to the selected table in the editor. S selects sample
+    /// rows of it.
+    fn submit_relation(&mut self, sample: bool) {
+        let Some(Dialog::Relations(view)) = &self.state.dialog else {
+            return;
+        };
+        let conn = self.state.doc().connection;
+        let links = Self::relation_links(&self.state.connections, conn, view);
+        let Some(link) = links.get(view.selected) else {
+            return;
+        };
+        let (join, other) = (view.join_sql(link), link.other());
+        self.state.dialog = None;
+        self.state.focus = Pane::Editor;
+        let opts = self.config.editor.options();
+        if sample {
+            let name = format!(
+                "{}.{}",
+                crate::catalog::quote(&other.0),
+                crate::catalog::quote(&other.1)
+            );
+            let statement = format!("SELECT * FROM {name} LIMIT {SAMPLE_ROWS};");
+            let editor = self.state.editor_mut();
+            editor.move_cursor(Motion::BufferEnd, false, 1);
+            if !editor.text().trim().is_empty() {
+                editor.insert_str("\n\n", &opts);
+            }
+            editor.insert_str(&statement, &opts);
+            self.run_statement();
+        } else {
+            let editor = self.state.editor_mut();
+            editor.move_cursor(Motion::BufferEnd, false, 1);
+            if !editor.text().trim().is_empty() {
+                editor.insert_str("\n", &opts);
+            }
+            editor.insert_str(&join, &opts);
+        }
     }
 
     fn open_history(&mut self) {
@@ -1140,6 +1196,7 @@ impl App {
         let scope = match self.state.dialog {
             Some(Dialog::Picker(_) | Dialog::History(_)) => Scope::Picker,
             Some(Dialog::Find(_)) => Scope::Find,
+            Some(Dialog::Relations(_)) => Scope::Relations,
             Some(Dialog::Form(_) | Dialog::Session(_) | Dialog::Confirm(_)) => Scope::Form,
             Some(Dialog::Password(_)) => Scope::Prompt,
             None => return,
@@ -1158,6 +1215,7 @@ impl App {
     fn dialog_type(&mut self, c: char) {
         match &mut self.state.dialog {
             Some(Dialog::Picker(p) | Dialog::Find(p) | Dialog::History(p)) => p.push(c),
+            Some(Dialog::Relations(_)) => {}
             Some(Dialog::Form(f)) => f.type_char(c),
             Some(Dialog::Session(f)) => f.type_char(c),
             Some(Dialog::Confirm(c0)) => {
@@ -1231,9 +1289,53 @@ impl App {
                     p.selected = 0;
                 }
             }
-            (Action::FindRelations, Some(Dialog::Find(_))) => {
-                self.notice("The relationship view is not built yet");
+            (Action::FindRelations, Some(Dialog::Find(p))) => {
+                let conn = self.state.docs[self.state.active].connection;
+                let chosen = Self::find_results(&self.state.connections, conn, p)
+                    .get(p.selected)
+                    .filter(|o| o.kind.is_relation())
+                    .map(|o| (o.schema.clone(), o.name.clone()));
+                match chosen {
+                    Some((schema, table)) => {
+                        self.state.dialog =
+                            Some(Dialog::Relations(relations::View::new(&schema, &table)));
+                    }
+                    None => self.notice("Relationships are shown for a table or view"),
+                }
             }
+            (Action::DialogNext, Some(Dialog::Relations(v))) => {
+                let count = Self::relation_links(
+                    &self.state.connections,
+                    self.state.docs[self.state.active].connection,
+                    v,
+                )
+                .len();
+                v.select_next(count);
+            }
+            (Action::DialogPrev, Some(Dialog::Relations(v))) => {
+                let count = Self::relation_links(
+                    &self.state.connections,
+                    self.state.docs[self.state.active].connection,
+                    v,
+                )
+                .len();
+                v.select_previous(count);
+            }
+            (Action::DialogSubmit, Some(Dialog::Relations(v))) => {
+                let conn = self.state.docs[self.state.active].connection;
+                let target = Self::relation_links(&self.state.connections, conn, v)
+                    .get(v.selected)
+                    .copied();
+                if let Some(link) = target {
+                    v.follow(&link);
+                }
+            }
+            (Action::DialogBackspace, Some(Dialog::Relations(v))) => {
+                v.back();
+            }
+            (Action::DialogCancel, Some(Dialog::Relations(_))) => self.state.dialog = None,
+            (Action::RelationJoin, Some(Dialog::Relations(_))) => self.submit_relation(false),
+            (Action::RelationSample, Some(Dialog::Relations(_))) => self.submit_relation(true),
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
             (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
             (Action::DialogNext | Action::DialogPrev, Some(Dialog::Session(f))) => f.next_field(),
@@ -4392,6 +4494,16 @@ mod tests {
                 object(Kind::Column, "public", "id", Some("orders")),
                 object(Kind::Function, "public", "refresh", None),
             ],
+            foreign_keys: vec![crate::catalog::foreign_key_from_row([
+                "items_order_fk",
+                "public",
+                "items",
+                "order_id",
+                "public",
+                "orders",
+                "id",
+            ])
+            .expect("key")],
         }
     }
 
@@ -4584,7 +4696,7 @@ mod tests {
     }
 
     #[test]
-    fn alt_z_in_find_is_reserved_for_the_relationship_view() {
+    fn alt_z_opens_the_relationship_view_and_enter_follows_a_key() {
         let mut a = app();
         let conn = connected(&mut a);
         a.update(Event::Background(Background::Catalog {
@@ -4592,13 +4704,78 @@ mod tests {
             result: Ok(sample_catalog()),
         }));
         ctrl(&mut a, 'p');
+        type_text(&mut a, "public.orders");
+        alt(&mut a, 'z');
+        let Some(Dialog::Relations(view)) = &a.state.dialog else {
+            panic!("expected the relationship view");
+        };
+        assert_eq!(
+            view.current(),
+            &("public".to_string(), "orders".to_string())
+        );
+        // items.order_id points at orders.id, so it is listed as incoming.
+        let links = App::relation_links(&a.state.connections, Some(conn), view);
+        assert_eq!(links.len(), 1);
+        assert!(!links[0].outgoing);
+        press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let Some(Dialog::Relations(view)) = &a.state.dialog else {
+            panic!("still open");
+        };
+        assert_eq!(view.current().1, "items");
+        press(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
+        let Some(Dialog::Relations(view)) = &a.state.dialog else {
+            panic!("still open");
+        };
+        assert_eq!(view.current().1, "orders");
+        press(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(a.state.dialog.is_none());
+    }
+
+    #[test]
+    fn alt_z_on_something_that_is_not_a_table_says_so() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "refresh");
         alt(&mut a, 'z');
         assert!(matches!(a.state.dialog, Some(Dialog::Find(_))));
         assert!(a
             .state
             .notice
             .as_deref()
-            .is_some_and(|n| n.contains("not built")));
+            .is_some_and(|n| n.contains("table or view")));
+    }
+
+    #[test]
+    fn j_puts_a_join_in_the_editor_and_s_runs_a_sample_of_the_other_table() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        let open = |a: &mut App| {
+            ctrl(a, 'p');
+            type_text(a, "public.orders");
+            alt(a, 'z');
+        };
+        open(&mut a);
+        press(&mut a, KeyCode::Char('j'), KeyModifiers::NONE);
+        assert!(a.state.dialog.is_none());
+        assert_eq!(a.state.focus, Pane::Editor);
+        assert_eq!(
+            a.state.editor().text(),
+            "JOIN public.items ON public.orders.id = public.items.order_id"
+        );
+        open(&mut a);
+        let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(commands.iter().any(
+            |c| matches!(c, Command::Run { sql, .. } if sql.ends_with("SELECT * FROM public.items LIMIT 100"))
+        ));
     }
 
     #[test]

@@ -73,6 +73,10 @@ pub enum Action {
     /// On a table or view: list only its columns. Again: back to everything.
     FindColumns,
     FindRelations,
+    /// In the relationship view: put a JOIN to the selected table in the editor.
+    RelationJoin,
+    /// In the relationship view: select sample rows of the selected table.
+    RelationSample,
     SessionEditDatabase,
     SessionEditUser,
     TransactionRollback,
@@ -147,6 +151,8 @@ const ACTIONS: &[(&str, Action)] = &[
     ("find.jump_type", Action::FindJump(Kind::Type)),
     ("find.jump_schema", Action::FindJump(Kind::Schema)),
     ("find.open_relationships", Action::FindRelations),
+    ("relations.join", Action::RelationJoin),
+    ("relations.sample", Action::RelationSample),
     ("session.edit_database", Action::SessionEditDatabase),
     ("session.edit_user", Action::SessionEditUser),
     ("transaction.rollback", Action::TransactionRollback),
@@ -348,6 +354,8 @@ impl Action {
             },
             Action::FindColumns => "columns of this table",
             Action::FindRelations => "relationships",
+            Action::RelationJoin => "put a join in the editor",
+            Action::RelationSample => "select sample rows",
             Action::SessionEditDatabase => "change database",
             Action::SessionEditUser => "change user",
             Action::TransactionRollback => "roll back",
@@ -377,6 +385,8 @@ pub enum Scope {
     Picker,
     /// The find overlay.
     Find,
+    /// The relationship view.
+    Relations,
     /// The form for entering connection details.
     Form,
     /// The password prompt.
@@ -395,6 +405,7 @@ impl Scope {
             Scope::Completion => "completion",
             Scope::Picker => "picker",
             Scope::Find => "find",
+            Scope::Relations => "relations",
             Scope::Form => "form",
             Scope::Prompt => "prompt",
             Scope::Dialog => "dialog",
@@ -411,6 +422,7 @@ impl Scope {
             Scope::Completion,
             Scope::Picker,
             Scope::Find,
+            Scope::Relations,
             Scope::Form,
             Scope::Prompt,
             Scope::Dialog,
@@ -817,6 +829,7 @@ mod tests {
             Scope::Completion,
             Scope::Picker,
             Scope::Find,
+            Scope::Relations,
             Scope::Form,
             Scope::Prompt,
             Scope::Dialog,

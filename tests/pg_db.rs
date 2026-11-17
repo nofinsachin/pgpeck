@@ -612,3 +612,55 @@ async fn small_results_and_other_statements_are_not_paged() {
     .await;
     assert!(out.sets[0].truncated() && !out.sets[0].is_paged());
 }
+
+#[tokio::test]
+async fn foreign_keys_are_read_with_their_columns_in_both_directions() {
+    let url = database!();
+    let (session, _) = connect(&url).await;
+    let out = db::run(
+        &session,
+        "drop schema if exists pgpeck_fk_test cascade;
+         create schema pgpeck_fk_test;
+         create table pgpeck_fk_test.parent (a int, b int, primary key (a, b));
+         create table pgpeck_fk_test.child (
+             id int primary key, pa int, pb int,
+             constraint child_parent_fk foreign key (pa, pb)
+                 references pgpeck_fk_test.parent (a, b));
+         create table pgpeck_fk_test.selfref (
+             id int primary key, up int references pgpeck_fk_test.selfref (id))",
+        10,
+        &Default::default(),
+    )
+    .await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+    let catalog = db::catalog(&session).await.expect("catalog");
+
+    let from_child = catalog.references_from("pgpeck_fk_test", "child");
+    assert_eq!(from_child.len(), 1);
+    let key = from_child[0];
+    assert_eq!(key.name, "child_parent_fk");
+    assert_eq!(key.columns, ["pa", "pb"]);
+    assert_eq!(
+        (key.ref_schema.as_str(), key.ref_table.as_str()),
+        ("pgpeck_fk_test", "parent")
+    );
+    assert_eq!(key.ref_columns, ["a", "b"]);
+    let to_parent = catalog.referenced_by("pgpeck_fk_test", "parent");
+    assert_eq!(to_parent.len(), 1);
+    assert_eq!(to_parent[0].table, "child");
+    // A table that points at itself is both ends of its own key.
+    assert_eq!(
+        catalog.references_from("pgpeck_fk_test", "selfref").len(),
+        1
+    );
+    assert_eq!(catalog.referenced_by("pgpeck_fk_test", "selfref").len(), 1);
+
+    let out = db::run(
+        &session,
+        "drop schema pgpeck_fk_test cascade",
+        10,
+        &Default::default(),
+    )
+    .await;
+    assert!(out.error.is_none(), "{:?}", out.error);
+}

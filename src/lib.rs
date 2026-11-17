@@ -22,6 +22,7 @@ pub mod logging;
 pub mod paths;
 pub mod picker;
 pub mod profile;
+pub mod relations;
 pub mod results;
 pub mod runtime;
 pub mod secrets;

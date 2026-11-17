@@ -1,0 +1,30 @@
+┌ Session ─────────────────────────────────────────────────────┐                ▄▄▄▄▄▄▄
+│Session: 127.0.0.1  Database: 127.0.0.1:5432, alice, app  TLS │             ▄██████████▄
+└──────────────────────────────────────────────────────────────┘         ◀████████  ●  ▀██
+┌ Results ─────────────────────────────────────────────────────┐              ████████████
+│    ┌───────────────────────────── Relationships: public.items ──────────────────────────────┐
+│    │public.orders › public.items                                                            │
+│    │References (this table points to)                                                       │
+│    │▶ (order_id) → public.orders (id)                                         items_order_fk│────┐
+│    │Referenced by (points to this table)                                                    │    │
+│    │  none                                                                                  │or  │
+│    │                                                                                        │    │
+│    │                                                                                        │────┘
+│    │                                                                                        │────┐
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│No r│                                                                                        │    │
+└────│                                                                                        │    │
+┌ ▶ E│                                                                                        │    │
+│1   │                                                                                        │    │
+│    │                                                                                        │    │
+│    │Enter go to table  Backspace back  j insert JOIN  s sample rows  Esc close              │    │
+│    └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                              ││                                  │
+└──────────────────────────────────────────────────────────────┘└──────────────────────────────────┘
+Ctrl+R run  Esc commands  Ctrl+O connect
+ (uri) │ app │ alice │ no TLS │ focus: Editor │ Ln 1, Col 1

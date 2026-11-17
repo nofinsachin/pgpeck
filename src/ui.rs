@@ -14,6 +14,7 @@ use crate::history;
 use crate::keymap::{Action, KeyChord, Scope};
 use crate::layout;
 use crate::picker::{self, Item};
+use crate::relations;
 use crate::results::Tab;
 use crate::sql::{self, Token, TokenKind};
 use crate::theme::Theme;
@@ -81,6 +82,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         Some(Dialog::Picker(picker)) => draw_picker(frame, app, theme, picker, area),
         Some(Dialog::Find(find)) => draw_find(frame, app, theme, find, area),
         Some(Dialog::History(picker)) => draw_history(frame, app, theme, picker, area),
+        Some(Dialog::Relations(view)) => draw_relations(frame, app, theme, view, area),
         Some(Dialog::Form(form)) => draw_form(frame, app, theme, form, area),
         Some(Dialog::Session(form)) => draw_session_form(frame, app, theme, form, area),
         Some(Dialog::Password(_)) => draw_password(frame, app, theme, area),
@@ -1444,6 +1446,126 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
 }
 
 /// The find overlay: a search box over results grouped by kind (R9).
+/// The relationship view: what the table points to, and what points to it.
+fn draw_relations(frame: &mut Frame, app: &App, theme: &Theme, view: &relations::View, area: Rect) {
+    let dim = Style::new().fg(theme.dimmed);
+    let label = Style::new().fg(theme.label).add_modifier(Modifier::BOLD);
+    let value = Style::new().fg(theme.value);
+    let popup = layout::centered(area, 90, area.height.saturating_sub(4).clamp(8, 22));
+    clear(frame, theme, popup);
+    let (schema, table) = view.current();
+    let block = Block::bordered()
+        .title(format!(" Relationships: {schema}.{table} "))
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.focus));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height < 4 {
+        return;
+    }
+    // The tables followed so far, so the way back is clear.
+    let trail = view
+        .trail
+        .iter()
+        .map(|(s, t)| format!("{s}.{t}"))
+        .collect::<Vec<_>>()
+        .join(" › ");
+    frame.render_widget(
+        Paragraph::new(Line::styled(fit(&trail, usize::from(inner.width)), dim)),
+        Rect { height: 1, ..inner },
+    );
+
+    let list = Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(2),
+        ..inner
+    };
+    let width = usize::from(list.width);
+    let links = App::relation_links(&app.state.connections, app.state.doc().connection, view);
+    let mut lines: Vec<Line> = Vec::new();
+    let mut selected_line = 0;
+    let heading = |lines: &mut Vec<Line>, text: &str, empty: &str, any: bool| {
+        lines.push(Line::styled(text.to_string(), label));
+        if !any {
+            lines.push(Line::styled(format!("  {empty}"), dim));
+        }
+    };
+    let outgoing: Vec<usize> = (0..links.len()).filter(|i| links[*i].outgoing).collect();
+    let incoming: Vec<usize> = (0..links.len()).filter(|i| !links[*i].outgoing).collect();
+    for (title, empty, group) in [
+        ("References (this table points to)", "none", &outgoing),
+        ("Referenced by (points to this table)", "none", &incoming),
+    ] {
+        heading(&mut lines, title, empty, !group.is_empty());
+        for &index in group {
+            let link = links[index];
+            let (mine, theirs) = link.columns();
+            let (other_schema, other_table) = link.other();
+            let selected = index == view.selected;
+            if selected {
+                selected_line = lines.len();
+            }
+            let arrow = if link.outgoing { "→" } else { "←" };
+            let text = format!(
+                "({}) {arrow} {other_schema}.{other_table} ({})",
+                mine.join(", "),
+                theirs.join(", ")
+            );
+            let name_width = link.key.name.chars().count();
+            let mut line = Line::from(vec![
+                Span::styled(if selected { "▶ " } else { "  " }, value),
+                Span::styled(
+                    fit(&text, width.saturating_sub(4 + name_width).max(8)),
+                    value,
+                ),
+                Span::raw("  "),
+                Span::styled(link.key.name.clone(), dim),
+            ]);
+            if selected {
+                line = line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD));
+            }
+            lines.push(line);
+        }
+    }
+    let top = (selected_line + 1).saturating_sub(usize::from(list.height));
+    let visible: Vec<Line> = lines
+        .into_iter()
+        .skip(top)
+        .take(usize::from(list.height))
+        .collect();
+    frame.render_widget(Paragraph::new(visible), list);
+
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Relations], |_| true)
+            .map_or(String::new(), |k| k.to_string())
+    };
+    let back = if view.trail.len() > 1 {
+        format!("  {} back", key(Action::DialogBackspace))
+    } else {
+        String::new()
+    };
+    let footer = if links.is_empty() {
+        format!("{} close", key(Action::DialogCancel))
+    } else {
+        format!(
+            "{} go to table{back}  {} insert JOIN  {} sample rows  {} close",
+            key(Action::DialogSubmit),
+            key(Action::RelationJoin),
+            key(Action::RelationSample),
+            key(Action::DialogCancel)
+        )
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(footer, dim)),
+        Rect {
+            y: inner.y + inner.height - 1,
+            height: 1,
+            ..inner
+        },
+    );
+}
+
 /// The history window: what you ran before, with the newest first.
 fn draw_history(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Picker, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
@@ -2940,6 +3062,7 @@ mod tests {
                         "since date",
                     ),
                 ],
+                foreign_keys: Vec::new(),
             }),
         }));
         key(&mut a, KeyCode::Char('p'), KeyModifiers::CONTROL);
@@ -3045,6 +3168,69 @@ mod tests {
             .expect("row");
         assert!(newest < older, "{out}");
         assert_snapshot("history_100x30", &out);
+    }
+
+    #[test]
+    fn the_relationship_view_lists_both_directions_and_the_way_back() {
+        use crate::catalog::foreign_key_from_row;
+        let mut a = connected_app(100, 30);
+        let conn = a.state.connections[0].id;
+        let fk = |row: [&str; 7]| foreign_key_from_row(row).expect("key");
+        a.update(Event::Background(crate::events::Background::Catalog {
+            conn,
+            result: Ok(crate::catalog::Catalog {
+                objects: vec![crate::catalog::Object {
+                    kind: crate::catalog::Kind::Table,
+                    schema: "public".to_string(),
+                    name: "orders".to_string(),
+                    parent: None,
+                    detail: String::new(),
+                }],
+                foreign_keys: vec![
+                    fk([
+                        "orders_customer_fk",
+                        "public",
+                        "orders",
+                        "customer_id",
+                        "sales",
+                        "customers",
+                        "id",
+                    ]),
+                    fk([
+                        "items_order_fk",
+                        "public",
+                        "items",
+                        "order_id",
+                        "public",
+                        "orders",
+                        "id",
+                    ]),
+                ],
+            }),
+        }));
+        key(&mut a, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        for c in "public.orders".chars() {
+            key(&mut a, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        key(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        let out = render(&a, 100, 30);
+        for expected in [
+            "Relationships: public.orders",
+            "References (this table points to)",
+            "▶ (customer_id) → sales.customers (id)",
+            "Referenced by (points to this table)",
+            "(id) ← public.items (order_id)",
+            "insert JOIN",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert!(!out.contains("back"), "no way back from the first table");
+        key(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        key(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let out = render(&a, 100, 30);
+        assert!(out.contains("public.orders › public.items"), "{out}");
+        assert!(out.contains("Backspace back"), "{out}");
+        assert_snapshot("relations_100x30", &out);
     }
 
     #[test]

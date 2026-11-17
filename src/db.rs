@@ -407,27 +407,68 @@ where t.typtype in ('e', 'd')
 limit 50000
 ";
 
+/// Foreign keys between the tables in `CATALOG_SQL`'s schemas. Column names
+/// are joined with the unit separator.
+const FOREIGN_KEYS_SQL: &str = r"
+select c.conname, fn.nspname, fc.relname,
+       (select string_agg(a.attname, chr(31) order by k.ord)
+          from unnest(c.conkey) with ordinality k(attnum, ord)
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum),
+       tn.nspname, tc.relname,
+       (select string_agg(a.attname, chr(31) order by k.ord)
+          from unnest(c.confkey) with ordinality k(attnum, ord)
+          join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum)
+from pg_constraint c
+join pg_class fc on fc.oid = c.conrelid
+join pg_namespace fn on fn.oid = fc.relnamespace
+join pg_class tc on tc.oid = c.confrelid
+join pg_namespace tn on tn.oid = tc.relnamespace
+where c.contype = 'f'
+  and fn.nspname !~ '^pg_' and fn.nspname <> 'information_schema'
+  and tn.nspname !~ '^pg_' and tn.nspname <> 'information_schema'
+order by fn.nspname, fc.relname, c.conname
+limit 20000
+";
+
 /// Reads the schemas, relations, columns, functions and types the user can
-/// see. Call it only when the session is idle, like `stats`.
+/// see, and the foreign keys between tables. Call it only when the session is idle, like `stats`.
 pub async fn catalog(session: &Session) -> Result<Catalog, DbError> {
+    // One round trip, so no other statement can slip in between the two reads.
     let messages = session
         .client
-        .simple_query(CATALOG_SQL)
+        .simple_query(&format!("{CATALOG_SQL};\n{FOREIGN_KEYS_SQL}"))
         .await
         .map_err(|e| DbError::from(&e))?;
     let mut objects = Vec::new();
+    let mut foreign_keys = Vec::new();
     for message in messages {
         let SimpleQueryMessage::Row(row) = message else {
             continue;
         };
         let text = |i: usize| row.get(i).unwrap_or("");
-        if let Some(object) =
+        // The first query has five columns, the second seven.
+        if row.len() == 7 {
+            if let Some(key) = catalog::foreign_key_from_row([
+                text(0),
+                text(1),
+                text(2),
+                text(3),
+                text(4),
+                text(5),
+                text(6),
+            ]) {
+                foreign_keys.push(key);
+            }
+        } else if let Some(object) =
             catalog::object_from_row([text(0), text(1), text(2), text(3), text(4)])
         {
             objects.push(object);
         }
     }
-    Ok(Catalog { objects })
+    Ok(Catalog {
+        objects,
+        foreign_keys,
+    })
 }
 
 /// Where the session is in a transaction (R16.1).

@@ -189,7 +189,7 @@
 "alt+n" = "find.jump_schema"
 # On a table or view: list only its columns. Again: back to everything.
 "alt+c" = "find.show_columns"
-# The relationship view is not built yet.
+# On a table or view: its foreign keys, in both directions.
 "alt+z" = "find.open_relationships"
 
 [form]
@@ -207,6 +207,20 @@
 "esc" = "dialog.cancel"
 "backspace" = "dialog.backspace"
 "ctrl+u" = "dialog.clear"
+
+[relations]
+# The relationship view has no search box, so letters are free for commands.
+"up" = "dialog.prev"
+"down" = "dialog.next"
+# Show the table on the other end of the selected key.
+"enter" = "dialog.submit"
+# Back to the table you came from.
+"backspace" = "dialog.backspace"
+"esc" = "dialog.cancel"
+# Put a JOIN to the selected table in the editor.
+"j" = "relations.join"
+# Select sample rows of the selected table.
+"s" = "relations.sample"
 
 [dialog]
 "up" = "help.scroll_up"

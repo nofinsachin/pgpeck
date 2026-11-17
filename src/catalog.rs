@@ -151,9 +151,47 @@ pub fn quote(name: &str) -> String {
     }
 }
 
+/// A foreign key: `schema.table(columns)` points at
+/// `ref_schema.ref_table(ref_columns)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignKey {
+    pub name: String,
+    pub schema: String,
+    pub table: String,
+    pub columns: Vec<String>,
+    pub ref_schema: String,
+    pub ref_table: String,
+    pub ref_columns: Vec<String>,
+}
+
+/// Separates column names inside one field of the foreign key query.
+pub const COLUMN_SEPARATOR: char = '\u{1f}';
+
+/// One row of the foreign key query: constraint, schema, table, columns,
+/// referenced schema, referenced table, referenced columns.
+pub fn foreign_key_from_row(row: [&str; 7]) -> Option<ForeignKey> {
+    let columns = |text: &str| -> Vec<String> {
+        text.split(COLUMN_SEPARATOR)
+            .filter(|c| !c.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let key = ForeignKey {
+        name: row[0].to_string(),
+        schema: row[1].to_string(),
+        table: row[2].to_string(),
+        columns: columns(row[3]),
+        ref_schema: row[4].to_string(),
+        ref_table: row[5].to_string(),
+        ref_columns: columns(row[6]),
+    };
+    (!key.columns.is_empty() && key.columns.len() == key.ref_columns.len()).then_some(key)
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Catalog {
     pub objects: Vec<Object>,
+    pub foreign_keys: Vec<ForeignKey>,
 }
 
 /// One row of the catalog query: kind, schema, name, parent, detail.
@@ -175,6 +213,22 @@ pub const PER_KIND_NARROWED: usize = 200;
 impl Catalog {
     pub fn is_empty(&self) -> bool {
         self.objects.is_empty()
+    }
+
+    /// Foreign keys that start at this table: what it points to.
+    pub fn references_from(&self, schema: &str, table: &str) -> Vec<&ForeignKey> {
+        self.foreign_keys
+            .iter()
+            .filter(|k| k.schema == schema && k.table == table)
+            .collect()
+    }
+
+    /// Foreign keys that end at this table: what points to it.
+    pub fn referenced_by(&self, schema: &str, table: &str) -> Vec<&ForeignKey> {
+        self.foreign_keys
+            .iter()
+            .filter(|k| k.ref_schema == schema && k.ref_table == table)
+            .collect()
     }
 
     /// The columns of one relation, in table order. Typing narrows them by name.
@@ -264,6 +318,7 @@ mod tests {
                 object(Kind::Column, "public", "order_id", Some("orders")),
                 object(Kind::Function, "public", "refresh_orders", None),
             ],
+            foreign_keys: Vec::new(),
         }
     }
 
@@ -345,7 +400,15 @@ mod tests {
         let objects = (0..100)
             .map(|i| object(Kind::Table, "public", &format!("t{i}"), None))
             .collect();
-        assert_eq!(Catalog { objects }.search("t").len(), PER_KIND);
+        assert_eq!(
+            Catalog {
+                objects,
+                ..Default::default()
+            }
+            .search("t")
+            .len(),
+            PER_KIND
+        );
     }
 
     #[test]
