@@ -47,6 +47,11 @@ pub enum Command {
     Disconnect {
         conn: ConnId,
     },
+    /// Add a line to the history file.
+    AppendHistory {
+        path: std::path::PathBuf,
+        line: String,
+    },
     /// Replace `connections.toml` with these contents.
     SaveProfiles {
         contents: String,

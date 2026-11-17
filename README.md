@@ -8,7 +8,7 @@ A fast, keyboard-driven terminal client for PostgreSQL, written in Rust.
 
 Early development. You can connect, write and run SQL, read results, and find schema objects by
 name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refuse `prefer`),
-the relationship view and query history.
+and the relationship view.
 
 ## What it does
 
@@ -21,6 +21,7 @@ the relationship view and query history.
 - **Browse long results.** A single `SELECT`, `WITH`, `VALUES` or `TABLE` query is paged: scroll
   past the edge of the loaded rows, or press `Home` or `End`, and pgpeck reads that part of the
   result from the server.
+- **Go back** to what you ran. `Alt+H` lists your statements, newest first, and searches them.
 - **Find** tables, views, columns, functions, types and schemas by name with `Ctrl+P`.
 - **Stay safe.** Risky statements wait for a typed `y` or `yes`. The session strip and the status
   bar flag open and failed transactions.
@@ -104,6 +105,7 @@ Remove the container with `docker rm -f pgpeck-pg`.
 | | `Z` | roll back an open or failed transaction |
 | | `Esc` | back to the context pane |
 | Any pane | `Ctrl+P` | open the Find window |
+| | `Alt+H` | open the history window (`H` in the context pane) |
 | | `Alt+Z` | roll back an open or failed transaction |
 | | `F7` | show or hide Trends |
 | | `F3` / `F4` | show or hide the right column / the results |
@@ -131,6 +133,17 @@ Before a risky statement runs, pgpeck shows it with the connection name and wait
 - `DROP` and `TRUNCATE`.
 
 The session strip and the status bar show an open or failed transaction.
+
+## History
+
+pgpeck remembers the statements you run, with the connection, the time taken and the row count.
+`Alt+H` (or `H` in the context pane) opens the list, newest first. Type to search, `Enter` puts the
+statement at the end of the editor, and nothing runs until you press `Ctrl+R`.
+
+It never stores rows. The list is a private file (`history.tsv`, mode 0600) in
+`$XDG_STATE_HOME/pgpeck`. Statements that mention a password are left out. Turn it off with
+`history.enabled = false`, and change how many entries are kept with `history.max_entries`
+(default 1000) in `config.toml`.
 
 ## Long results
 

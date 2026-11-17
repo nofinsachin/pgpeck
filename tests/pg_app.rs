@@ -773,3 +773,39 @@ async fn a_long_result_is_browsed_window_by_window() {
         .offset;
     assert!(offset > 0, "paging down must load a later window");
 }
+
+#[tokio::test]
+async fn statements_are_saved_to_a_private_history_file_without_their_rows() {
+    use std::os::unix::fs::PermissionsExt;
+    let url = database!();
+    let dir = std::env::temp_dir().join(format!("pgpeck-history-e2e-{}", std::process::id()));
+    let path = dir.join("history.tsv");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut h = Harness::new();
+    h.app.state.history_path = Some(path.clone());
+    h.connect_with_uri(&url).await;
+    h.run("select 'needle_value' as secret_column, 1 as n")
+        .await;
+    for _ in 0..50 {
+        if path.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let text = std::fs::read_to_string(&path).expect("the history file");
+    assert!(
+        text.contains("select 'needle_value' as secret_column, 1 as n"),
+        "{text}"
+    );
+    assert_eq!(text.lines().count(), 1, "{text}");
+    // The statement is kept. The rows that came back are not.
+    assert_eq!(text.matches("needle_value").count(), 1, "{text}");
+    let mode = std::fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let entries = pgpeck::history::load(&path, 100);
+    assert_eq!(
+        (entries.len(), entries[0].ok, entries[0].rows),
+        (1, true, Some(1))
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

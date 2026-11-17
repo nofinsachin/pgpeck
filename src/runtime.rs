@@ -142,6 +142,13 @@ impl Runtime {
                     }
                 });
             }
+            Command::AppendHistory { path, line } => {
+                tokio::spawn(async move {
+                    if let Err(e) = crate::history::append(&path, &line) {
+                        tracing::warn!(error = %e, "could not save the history");
+                    }
+                });
+            }
             Command::Disconnect { conn } => {
                 // Dropping the session closes the connection.
                 if let Ok(mut sessions) = this.sessions.lock() {

@@ -55,3 +55,11 @@ row_limit = 10000
 # the whole result in temporary storage until the next run in the same buffer.
 # Set to false to keep only the first `row_limit` rows instead.
 paged = true
+
+[history]
+# Keep a list of the statements you run, with the connection, time taken and
+# row count, in $XDG_STATE_HOME/pgpeck/history.tsv (private to you). Rows are
+# never stored. Statements that mention a password are left out.
+enabled = true
+# Entries kept. The oldest are dropped. Range 1 to 100000.
+max_entries = 1000

@@ -13,6 +13,7 @@ use crate::db::{ConnId, ConnectionInfo, Paging, SessionStats, TxState};
 use crate::editor::{display_col, Buffer, EditCmd, Motion, Pos};
 use crate::events::{Background, Event};
 use crate::form::{ConnectForm, SessionForm};
+use crate::history;
 use crate::keymap::{Action, KeyChord, Keymap, Scope};
 use crate::layout;
 use crate::picker::{self, Picker};
@@ -80,6 +81,10 @@ pub struct State {
     pub next_conn: ConnId,
     /// Saved connection profiles.
     pub profiles: Profiles,
+    /// The statements run before, oldest first.
+    pub history: Vec<history::Entry>,
+    /// Where the history is kept. `None` turns recording off.
+    pub history_path: Option<std::path::PathBuf>,
     /// A modal box that takes all keys, such as the connection picker.
     pub dialog: Option<Dialog>,
     /// The statement being executed, if any.
@@ -154,6 +159,8 @@ pub enum Dialog {
     Picker(Picker),
     /// The find overlay. It reuses the picker's input and selection.
     Find(Picker),
+    /// The statements run before. It reuses the picker's input and selection.
+    History(Picker),
     /// Connection details typed by hand.
     Form(ConnectForm),
     /// Database and user of the current connection.
@@ -200,6 +207,8 @@ pub struct Running {
     pub conn: ConnId,
     pub doc: DocId,
     pub started: Instant,
+    /// What is running, for the history.
+    pub sql: String,
 }
 
 /// The open suggestion popup.
@@ -298,6 +307,8 @@ impl State {
             connections: Vec::new(),
             next_conn: 1,
             profiles: Profiles::default(),
+            history: Vec::new(),
+            history_path: None,
             dialog: None,
             running: None,
             register: String::new(),
@@ -550,6 +561,7 @@ impl App {
             Pane::Context => &[
                 Action::ConnectionOpen,
                 Action::FindOpen,
+                Action::HistoryOpen,
                 Action::QueryRun,
                 Action::FocusEditor,
                 Action::BufferNew,
@@ -835,6 +847,7 @@ impl App {
             | Action::FindColumns
             | Action::FindRelations => {}
             Action::FindOpen => self.open_find(),
+            Action::HistoryOpen => self.open_history(),
             Action::CompletionTrigger => self.refresh_completion(true),
             Action::CompletionAccept => self.accept_completion(),
             Action::CompletionDismiss => self.state.completion = None,
@@ -913,6 +926,76 @@ impl App {
         c.catalog_busy = true;
         self.pending.push(Command::Catalog { conn });
         true
+    }
+
+    fn open_history(&mut self) {
+        if !self.config.history.enabled {
+            return self.notice("History is turned off in config.toml");
+        }
+        self.state.help_open = false;
+        self.state.completion = None;
+        self.state.dialog = Some(Dialog::History(Picker::default()));
+    }
+
+    /// Enter puts the chosen statement at the end of the editor. It does not
+    /// run it.
+    fn submit_history(&mut self) {
+        let Some(Dialog::History(picker)) = &self.state.dialog else {
+            return;
+        };
+        let chosen = history::search(&self.state.history, &picker.input)
+            .get(picker.selected)
+            .map(|e| e.sql.clone());
+        let Some(sql) = chosen else { return };
+        self.state.dialog = None;
+        self.state.focus = Pane::Editor;
+        let opts = self.config.editor.options();
+        let editor = self.state.editor_mut();
+        editor.move_cursor(Motion::BufferEnd, false, 1);
+        if !editor.text().trim().is_empty() {
+            editor.insert_str("\n\n", &opts);
+        }
+        editor.insert_str(&sql, &opts);
+    }
+
+    /// Adds a finished run to the history and asks for it to be saved.
+    fn record_history(&mut self, conn: ConnId, sql: &str, output: &crate::db::QueryOutput) {
+        let Some(path) = self.state.history_path.clone() else {
+            return;
+        };
+        if !self.config.history.enabled || !history::should_record(sql) {
+            return;
+        }
+        let connection = self
+            .state
+            .connection(conn)
+            .map_or_else(String::new, |c| c.profile.shown_name().to_string());
+        let rows = output
+            .sets
+            .iter()
+            .rev()
+            .find(|s| s.returns_rows())
+            .map(|s| s.total_rows);
+        let entry = history::Entry {
+            when: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+            connection,
+            ok: output.error.is_none(),
+            millis: u64::try_from(output.elapsed.as_millis()).unwrap_or(u64::MAX),
+            rows,
+            sql: sql.trim().to_string(),
+        };
+        self.pending.push(Command::AppendHistory {
+            path,
+            line: entry.to_line(),
+        });
+        self.state.history.push(entry);
+        let max = self.config.history.max_entries;
+        if self.state.history.len() > max {
+            let extra = self.state.history.len() - max;
+            self.state.history.drain(..extra);
+        }
     }
 
     fn open_find(&mut self) {
@@ -1055,7 +1138,7 @@ impl App {
 
     fn on_dialog_key(&mut self, chord: KeyChord) {
         let scope = match self.state.dialog {
-            Some(Dialog::Picker(_)) => Scope::Picker,
+            Some(Dialog::Picker(_) | Dialog::History(_)) => Scope::Picker,
             Some(Dialog::Find(_)) => Scope::Find,
             Some(Dialog::Form(_) | Dialog::Session(_) | Dialog::Confirm(_)) => Scope::Form,
             Some(Dialog::Password(_)) => Scope::Prompt,
@@ -1074,7 +1157,7 @@ impl App {
 
     fn dialog_type(&mut self, c: char) {
         match &mut self.state.dialog {
-            Some(Dialog::Picker(p) | Dialog::Find(p)) => p.push(c),
+            Some(Dialog::Picker(p) | Dialog::Find(p) | Dialog::History(p)) => p.push(c),
             Some(Dialog::Form(f)) => f.type_char(c),
             Some(Dialog::Session(f)) => f.type_char(c),
             Some(Dialog::Confirm(c0)) => {
@@ -1154,7 +1237,12 @@ impl App {
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
             (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
             (Action::DialogNext | Action::DialogPrev, Some(Dialog::Session(f))) => f.next_field(),
-            (Action::DialogBackspace, Some(Dialog::Picker(p) | Dialog::Find(p))) => p.backspace(),
+            (
+                Action::DialogBackspace,
+                Some(Dialog::Picker(p) | Dialog::Find(p) | Dialog::History(p)),
+            ) => {
+                p.backspace();
+            }
             (Action::DialogBackspace, Some(Dialog::Form(f))) => f.backspace(),
             (Action::DialogBackspace, Some(Dialog::Session(f))) => f.backspace(),
             (Action::DialogBackspace, Some(Dialog::Confirm(c))) => {
@@ -1166,12 +1254,20 @@ impl App {
                 text.pop();
                 p.input = Secret::new(text);
             }
-            (Action::DialogClear, Some(Dialog::Picker(p) | Dialog::Find(p))) => p.clear(),
+            (
+                Action::DialogClear,
+                Some(Dialog::Picker(p) | Dialog::Find(p) | Dialog::History(p)),
+            ) => {
+                p.clear();
+            }
             (Action::DialogClear, Some(Dialog::Form(f))) => f.clear(),
             (Action::DialogClear, Some(Dialog::Session(f))) => f.clear(),
             (Action::DialogClear, Some(Dialog::Confirm(c))) => c.input.clear(),
             (Action::DialogClear, Some(Dialog::Password(p))) => p.input = Secret::new(""),
-            (Action::DialogCancel, Some(Dialog::Picker(_) | Dialog::Find(_))) => {
+            (
+                Action::DialogCancel,
+                Some(Dialog::Picker(_) | Dialog::Find(_) | Dialog::History(_)),
+            ) => {
                 self.state.dialog = None;
             }
             // Esc in the form goes back to the list.
@@ -1191,6 +1287,15 @@ impl App {
             }
             (Action::DialogSubmit, Some(Dialog::Picker(_))) => self.submit_picker(),
             (Action::DialogSubmit, Some(Dialog::Find(_))) => self.submit_find(false),
+            (Action::DialogSubmit, Some(Dialog::History(_))) => self.submit_history(),
+            (Action::DialogNext, Some(Dialog::History(p))) => {
+                let count = history::search(&self.state.history, &p.input).len();
+                p.select_next(count);
+            }
+            (Action::DialogPrev, Some(Dialog::History(p))) => {
+                let count = history::search(&self.state.history, &p.input).len();
+                p.select_previous(count);
+            }
             (Action::FindSample, Some(Dialog::Find(_))) => self.submit_find(true),
             (Action::DialogSubmit, Some(Dialog::Form(_))) => self.submit_form(),
             (Action::DialogSubmit, Some(Dialog::Session(_))) => self.submit_session(),
@@ -1480,7 +1585,9 @@ impl App {
             }
             Background::QueryFinished { conn, doc, output } => {
                 if self.state.running.as_ref().is_some_and(|r| r.conn == conn) {
-                    self.state.running = None;
+                    if let Some(finished) = self.state.running.take() {
+                        self.record_history(conn, &finished.sql, &output);
+                    }
                 }
                 let cancelled = output.error.as_ref().is_some_and(|e| e.is_cancellation());
                 let tx = output.tx;
@@ -1658,6 +1765,7 @@ impl App {
             conn,
             doc,
             started: Instant::now(),
+            sql: sql.clone(),
         });
         self.state.completion = None;
         // A single read-only query is paged through a cursor of its own. The
@@ -3007,6 +3115,97 @@ mod tests {
         );
     }
 
+    /// Runs `sql` in the editor and finishes it, as the runtime would.
+    fn run_and_finish(a: &mut App, sql: &str) -> Vec<Command> {
+        // A run that returned rows leaves the focus on the results.
+        send(a, KeyCode::Char('2'), KeyModifiers::ALT);
+        send(a, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        send(a, KeyCode::Delete, KeyModifiers::NONE);
+        a.update(Event::Paste(sql.to_string()));
+        let Command::Run { conn, doc, .. } = press_run(a)[0].clone() else {
+            panic!("run")
+        };
+        a.update(Event::Background(Background::QueryFinished {
+            conn,
+            doc,
+            output: output(vec![rows_set(&[&[Some("1"), None]])], None),
+        }))
+    }
+
+    fn history_app() -> App {
+        let mut a = app();
+        a.state.history_path = Some(std::path::PathBuf::from("/tmp/pgpeck-test-history.tsv"));
+        connected(&mut a);
+        a
+    }
+
+    #[test]
+    fn a_finished_run_is_added_to_the_history_and_saved() {
+        let mut a = history_app();
+        let commands = run_and_finish(&mut a, "select 1");
+        let line = commands
+            .iter()
+            .find_map(|c| match c {
+                Command::AppendHistory { line, .. } => Some(line.clone()),
+                _ => None,
+            })
+            .expect("a history line is saved");
+        let saved = history::Entry::from_line(&line).expect("a valid line");
+        assert_eq!(
+            (saved.sql.as_str(), saved.ok, saved.rows),
+            ("select 1", true, Some(1))
+        );
+        assert_eq!(a.state.history.len(), 1);
+        assert_eq!(a.state.history[0], saved);
+    }
+
+    #[test]
+    fn statements_with_a_password_and_a_disabled_history_are_not_recorded() {
+        let mut a = history_app();
+        let commands = run_and_finish(&mut a, "alter role app password 'x'");
+        assert!(!commands
+            .iter()
+            .any(|c| matches!(c, Command::AppendHistory { .. })));
+        assert!(a.state.history.is_empty());
+        a.config.history.enabled = false;
+        run_and_finish(&mut a, "select 2");
+        assert!(a.state.history.is_empty());
+        let key = send(&mut a, KeyCode::Char('h'), KeyModifiers::ALT);
+        assert!(key.is_empty());
+        assert!(a.state.dialog.is_none(), "no window while it is off");
+    }
+
+    #[test]
+    fn the_history_window_searches_and_puts_a_statement_in_the_editor_without_running_it() {
+        let mut a = history_app();
+        run_and_finish(&mut a, "select * from orders");
+        run_and_finish(&mut a, "select * from customers");
+        send(&mut a, KeyCode::Char('2'), KeyModifiers::ALT);
+        send(&mut a, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        send(&mut a, KeyCode::Delete, KeyModifiers::NONE);
+        a.update(Event::Paste("select 99".to_string()));
+        send(&mut a, KeyCode::Char('h'), KeyModifiers::ALT);
+        assert!(matches!(a.state.dialog, Some(Dialog::History(_))));
+        // Newest first: the first entry is the last one run.
+        type_into(&mut a, "orders");
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(commands.is_empty(), "choosing never runs anything");
+        assert!(a.state.dialog.is_none());
+        assert_eq!(a.state.focus, Pane::Editor);
+        assert_eq!(a.state.editor().text(), "select 99\n\nselect * from orders");
+    }
+
+    #[test]
+    fn the_history_is_capped_at_the_configured_size() {
+        let mut a = history_app();
+        a.config.history.max_entries = 2;
+        for n in 0..4 {
+            run_and_finish(&mut a, &format!("select {n}"));
+        }
+        let kept: Vec<&str> = a.state.history.iter().map(|e| e.sql.as_str()).collect();
+        assert_eq!(kept, ["select 2", "select 3"]);
+    }
+
     #[test]
     fn results_for_a_closed_buffer_are_dropped() {
         let mut a = app();
@@ -3722,6 +3921,7 @@ mod tests {
             conn,
             doc: a.state.doc().id,
             started: Instant::now(),
+            sql: String::new(),
         });
         assert_eq!(
             stats_commands(&a.update(Event::Tick)),

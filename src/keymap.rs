@@ -65,6 +65,8 @@ pub enum Action {
     PickerSaveProfile,
     PickerEditProfile,
     FindOpen,
+    /// Lists the statements you ran before.
+    HistoryOpen,
     FindSample,
     /// Moves the selection to the first result of a kind.
     FindJump(Kind),
@@ -128,6 +130,7 @@ const ACTIONS: &[(&str, Action)] = &[
     ("picker.save_profile", Action::PickerSaveProfile),
     ("picker.edit_profile", Action::PickerEditProfile),
     ("find.open", Action::FindOpen),
+    ("history.open", Action::HistoryOpen),
     ("find.sample_rows", Action::FindSample),
     ("find.jump_table", Action::FindJump(Kind::Table)),
     ("find.jump_view", Action::FindJump(Kind::View)),
@@ -331,6 +334,7 @@ impl Action {
             Action::PickerSaveProfile => "save as profile",
             Action::PickerEditProfile => "edit connection",
             Action::FindOpen => "find",
+            Action::HistoryOpen => "history",
             Action::FindSample => "select sample rows",
             Action::FindJump(kind) => match kind {
                 Kind::Table => "jump to tables",

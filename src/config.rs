@@ -13,6 +13,15 @@ pub struct Config {
     pub connections: ConnectionsConfig,
     pub results: ResultsConfig,
     pub session: SessionConfig,
+    pub history: HistoryConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryConfig {
+    /// Keep a list of the statements you run.
+    pub enabled: bool,
+    /// Entries kept. The oldest are dropped.
+    pub max_entries: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +89,10 @@ impl Default for Config {
                 row_limit: 10_000,
                 paged: true,
             },
+            history: HistoryConfig {
+                enabled: true,
+                max_entries: 1000,
+            },
             session: SessionConfig {
                 refresh_seconds: 10,
             },
@@ -112,6 +125,7 @@ const SCHEMA: &[(&str, &[&str])] = &[
     ("connections", &["password_sources"]),
     ("results", &["row_limit", "paged"]),
     ("session", &["refresh_seconds"]),
+    ("history", &["enabled", "max_entries"]),
 ];
 
 impl Config {
@@ -200,6 +214,14 @@ impl Config {
                     .and_then(|n| usize::try_from(n).ok())
                     .filter(|n| (1..=1_000_000).contains(n))
                     .ok_or("expected a whole number from 1 to 1000000")?;
+            }
+            ("history", "enabled") => self.history.enabled = want_bool(value)?,
+            ("history", "max_entries") => {
+                self.history.max_entries = value
+                    .as_integer()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| (1..=100_000).contains(n))
+                    .ok_or("expected a whole number from 1 to 100000")?;
             }
             ("session", "refresh_seconds") => {
                 self.session.refresh_seconds = value

@@ -15,6 +15,7 @@ pub mod editor;
 pub mod events;
 pub mod form;
 pub mod fuzzy;
+pub mod history;
 pub mod keymap;
 pub mod layout;
 pub mod logging;

@@ -10,6 +10,7 @@ use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
 use crate::catalog;
 use crate::db::{DbError, ResultSet, SessionStats, TxState};
 use crate::editor::{cell_width, display_col, Pos};
+use crate::history;
 use crate::keymap::{Action, KeyChord, Scope};
 use crate::layout;
 use crate::picker::{self, Item};
@@ -79,6 +80,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     match &app.state.dialog {
         Some(Dialog::Picker(picker)) => draw_picker(frame, app, theme, picker, area),
         Some(Dialog::Find(find)) => draw_find(frame, app, theme, find, area),
+        Some(Dialog::History(picker)) => draw_history(frame, app, theme, picker, area),
         Some(Dialog::Form(form)) => draw_form(frame, app, theme, form, area),
         Some(Dialog::Session(form)) => draw_session_form(frame, app, theme, form, area),
         Some(Dialog::Password(_)) => draw_password(frame, app, theme, area),
@@ -1442,6 +1444,119 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
 }
 
 /// The find overlay: a search box over results grouped by kind (R9).
+/// The history window: what you ran before, with the newest first.
+fn draw_history(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Picker, area: Rect) {
+    let dim = Style::new().fg(theme.dimmed);
+    let value = Style::new().fg(theme.value);
+    let popup = layout::centered(area, 90, area.height.saturating_sub(4).clamp(8, 22));
+    clear(frame, theme, popup);
+    let block = Block::bordered()
+        .title(" History ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::new().fg(theme.focus));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height < 3 {
+        return;
+    }
+    let input_row = Rect { height: 1, ..inner };
+    if picker.input.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("> "),
+                Span::styled("type to search the statements you ran", dim),
+            ])),
+            input_row,
+        );
+    } else {
+        frame.render_widget(Paragraph::new(format!("> {}", picker.input)), input_row);
+    }
+    let cursor_x = inner.x
+        + (2 + picker.input.chars().map(cell_width).sum::<usize>())
+            .min(usize::from(inner.width.saturating_sub(1))) as u16;
+    frame.set_cursor_position((cursor_x, inner.y));
+
+    let list = Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(2),
+        ..inner
+    };
+    let width = usize::from(list.width);
+    let entries = history::search(&app.state.history, &picker.input);
+    let mut lines: Vec<Line> = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let selected = index == picker.selected;
+        let marker = if selected { "▶ " } else { "  " };
+        // A mark that does not rely on color: failed runs say so.
+        let outcome = if entry.ok {
+            entry.rows.map_or_else(String::new, |r| format!("{r} rows"))
+        } else {
+            "failed".to_string()
+        };
+        let facts = format!(
+            "{}  {}  {}",
+            entry.connection,
+            format_elapsed(std::time::Duration::from_millis(entry.millis)),
+            outcome
+        );
+        let one_line = entry.sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        let sql_width = width.saturating_sub(2 + facts.chars().count() + 2);
+        let mut line = Line::from(vec![
+            Span::styled(marker, value),
+            Span::styled(fit(&clean_cell(&one_line), sql_width.max(8)), value),
+            Span::raw("  "),
+            Span::styled(
+                facts,
+                if entry.ok {
+                    dim
+                } else {
+                    Style::new().fg(theme.error)
+                },
+            ),
+        ]);
+        if selected {
+            line = line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD));
+        }
+        lines.push(line);
+    }
+    if lines.is_empty() {
+        let message = if app.state.history.is_empty() {
+            "Nothing yet. Statements you run are listed here"
+        } else {
+            "Nothing matches"
+        };
+        lines.push(Line::styled(message, dim));
+    }
+    let top = (picker.selected + 1).saturating_sub(usize::from(list.height));
+    let visible: Vec<Line> = lines
+        .into_iter()
+        .skip(top)
+        .take(usize::from(list.height))
+        .collect();
+    frame.render_widget(Paragraph::new(visible), list);
+
+    let key = |a| {
+        app.keymap
+            .key_for(a, &[Scope::Picker], |_| true)
+            .map_or(String::new(), |k| k.to_string())
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            format!(
+                "{} put in the editor  {} close",
+                key(Action::DialogSubmit),
+                key(Action::DialogCancel)
+            ),
+            dim,
+        )),
+        Rect {
+            y: inner.y + inner.height - 1,
+            height: 1,
+            ..inner
+        },
+    );
+}
+
 fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
     let label = Style::new().fg(theme.label);
@@ -2133,7 +2248,7 @@ mod tests {
         for expected in [
             "Welcome to pgpeck.",
             "Press C to connect to a database.",
-            "C connect  F find  R run  E edit  N new buffer  Q quit  ? help",
+            "C connect  F find  H history  R run  E edit  N new buffer  Q quit  ? help",
             "┌ ▶ Context",
             "Session",
             "Not connected",
@@ -2885,6 +3000,51 @@ mod tests {
         let tiny = out.lines().find(|l| l.contains("tiny")).expect("row");
         assert!(tiny.contains('█'), "{tiny}");
         assert_snapshot("trends_160x24", &out);
+    }
+
+    #[test]
+    fn the_history_window_lists_statements_newest_first_with_what_happened() {
+        let mut a = connected_app(100, 30);
+        a.state.history = vec![
+            crate::history::Entry {
+                when: 1,
+                connection: "dev".to_string(),
+                ok: true,
+                millis: 12,
+                rows: Some(3),
+                sql: "select * from orders\nwhere id = 1".to_string(),
+            },
+            crate::history::Entry {
+                when: 2,
+                connection: "dev".to_string(),
+                ok: false,
+                millis: 2500,
+                rows: None,
+                sql: "select 1/0".to_string(),
+            },
+        ];
+        key(&mut a, KeyCode::Char('h'), KeyModifiers::ALT);
+        let out = render(&a, 100, 30);
+        for expected in [
+            "History",
+            "▶ select 1/0",
+            "failed",
+            "select * from orders where id = 1",
+            "3 rows",
+            "put in the editor",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        let newest = out
+            .lines()
+            .position(|l| l.contains("select 1/0"))
+            .expect("row");
+        let older = out
+            .lines()
+            .position(|l| l.contains("from orders"))
+            .expect("row");
+        assert!(newest < older, "{out}");
+        assert_snapshot("history_100x30", &out);
     }
 
     #[test]

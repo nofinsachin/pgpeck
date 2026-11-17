@@ -158,6 +158,12 @@ async fn run(settings: Settings) -> std::io::Result<()> {
     );
     let mut app = App::new(config, keymap);
     app.state.profiles = profiles;
+    if app.config.history.enabled {
+        if let Some(path) = pgpeck::history::path() {
+            app.state.history = pgpeck::history::load(&path, app.config.history.max_entries);
+            app.state.history_path = Some(path);
+        }
+    }
     if !problems.is_empty() {
         app.state.notice = Some(format!(
             "{} configuration problem(s). Run pgpeck --check-config",

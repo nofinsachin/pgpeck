@@ -53,6 +53,8 @@
 "ctrl+o" = "connection.open"
 # Finds tables, views, columns, functions, types and schemas by name.
 "ctrl+p" = "find.open"
+# Lists the statements you ran before. Enter puts one in the editor.
+"alt+h" = "history.open"
 "alt+o" = "connection.reconnect"
 # Ends an open or failed transaction with ROLLBACK.
 "alt+z" = "transaction.rollback"
@@ -119,6 +121,7 @@
 # key is enough. Typing SQL happens in the editor, which never gives up letters.
 "c" = "connection.open"
 "f" = "find.open"
+"h" = "history.open"
 "r" = "query.run_statement"
 "e" = "focus.editor"
 "enter" = "focus.editor"
