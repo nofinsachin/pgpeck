@@ -777,7 +777,14 @@ impl App {
             Action::ConnectionOpen => self.open_picker(),
             Action::ConnectionReconnect => self.reconnect(),
             Action::QueryRun => self.run_statement(),
-            Action::QueryCancel => self.cancel_query(),
+            Action::QueryCancel => {
+                // Ctrl+C cancels a running statement. Otherwise it copies.
+                if self.state.running.is_some() {
+                    self.cancel_query();
+                } else if self.state.focus == Pane::Editor {
+                    self.perform(Action::Edit(EditCmd::Copy));
+                }
+            }
             Action::ResultsUp => self.scroll_results(-1, false),
             Action::ResultsDown => self.scroll_results(1, false),
             Action::ResultsPageUp => self.scroll_results(-1, true),
@@ -2958,6 +2965,20 @@ mod tests {
             a.state.editor().text(),
             "select pg_sleep(5)",
             "Ctrl+C never edits"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_copies_the_selection_when_nothing_runs() {
+        let mut a = app();
+        type_into(&mut a, "select 1");
+        send(&mut a, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(send(&mut a, KeyCode::Char('c'), KeyModifiers::CONTROL).is_empty());
+        assert_eq!(a.state.register, "select 1");
+        assert_eq!(
+            a.state.editor().text(),
+            "select 1",
+            "copying changes nothing"
         );
     }
 

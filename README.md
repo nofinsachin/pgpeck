@@ -54,6 +54,10 @@ the relationship view and query history.
 - **Context** and **Trends** in the right column. The logo sits above Context on tall terminals.
   Trends needs about 18 rows, or 25 with the logo, and is left out below that.
 
+Copied text also goes to your system clipboard, through the terminal (OSC 52). Most modern
+terminals allow this. If yours does not, check its clipboard setting, or paste with the terminal's
+own paste key. Results are read-only. The full layout needs a terminal of at least 80x24.
+
 ## Build and run
 
 ```
@@ -105,7 +109,7 @@ Remove the container with `docker rm -f pgpeck-pg`.
 | | `F3` / `F4` | show or hide the right column / the results |
 | | `Tab`, `F6` | next pane |
 | Editor | `Ctrl+R` | run the statement under the cursor, or the selection |
-| | `Ctrl+C` | cancel a running statement |
+| | `Ctrl+C` | cancel a running statement. Otherwise copy the selection |
 | | `Esc` | back to the context pane |
 | Results | arrows, `[` and `]` | move |
 | Find window | `Enter` | put the object's name in the editor and copy it |

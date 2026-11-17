@@ -1,4 +1,4 @@
-Terminal too small. Need 60x15
+Terminal too small. Need 80x24
 ┌ ▶ Results ───────────────────────────┐
 │                                      │
 │                                      │

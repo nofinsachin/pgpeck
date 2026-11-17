@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod catalog;
+pub mod clipboard;
 pub mod command;
 pub mod complete;
 pub mod config;

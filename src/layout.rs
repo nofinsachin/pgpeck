@@ -6,9 +6,9 @@ use ratatui::layout::{Constraint, Layout as Split, Margin, Rect};
 use crate::app::{Pane, State};
 use crate::config::Config;
 
-/// Provisional minimum size. The real value is an open question in the
-/// requirements. Below it, one pane is shown at a time (R20.5).
-pub const MIN_SIZE: (u16, u16) = (60, 15);
+/// Minimum size for the full layout. Below it, one pane is shown at a time
+/// with a message (R20.5).
+pub const MIN_SIZE: (u16, u16) = (80, 24);
 
 /// The right column holds the context and the trends, top to bottom. It takes this share of the width, within these limits.
 const SIDE_SHARE: u16 = 34;

@@ -2419,14 +2419,14 @@ mod tests {
     }
 
     #[test]
-    fn trends_are_left_out_when_the_right_column_is_too_short() {
-        let a = connected_app(100, 18);
-        let areas = layout::compute(Rect::new(0, 0, 100, 18), &a.state, &a.config);
-        assert!(areas.trends.is_none());
-        assert!(areas.session.is_some() && areas.context.is_some());
-        let tall = connected_app(100, 40);
-        let areas = layout::compute(Rect::new(0, 0, 100, 40), &tall.state, &tall.config);
-        assert!(areas.trends.is_some());
+    fn trends_fit_at_the_minimum_size_and_are_left_out_below_it() {
+        let (w, h) = layout::MIN_SIZE;
+        let a = connected_app(w, h);
+        let areas = layout::compute(Rect::new(0, 0, w, h), &a.state, &a.config);
+        assert!(areas.trends.is_some() && areas.context.is_some() && areas.session.is_some());
+        let small = connected_app(w, h - 1);
+        let areas = layout::compute(Rect::new(0, 0, w, h - 1), &small.state, &small.config);
+        assert!(areas.message.is_some() && areas.trends.is_none());
     }
 
     #[test]
@@ -2597,6 +2597,7 @@ mod tests {
     #[test]
     fn narrow_terminal_collapses_context_strip() {
         assert_snapshot("narrow_70x20", &render(&app(70, 20), 70, 20));
+        assert!(render(&app(70, 20), 70, 20).contains("Terminal too small. Need 80x24"));
     }
 
     #[test]

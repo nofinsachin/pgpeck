@@ -194,8 +194,19 @@ async fn event_loop(
     let mut slow = tokio::time::interval(std::time::Duration::from_secs(1));
     slow.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Whatever is copied also goes to the system clipboard, through the terminal.
+    let mut copied = String::new();
     while !app.state.quit {
         terminal.draw(|frame| ui::draw(frame, app, theme))?;
+        if app.state.register != copied {
+            copied.clone_from(&app.state.register);
+            if let Some(sequence) = pgpeck::clipboard::osc52(&copied) {
+                use std::io::Write;
+                let mut out = std::io::stdout();
+                out.write_all(sequence.as_bytes())?;
+                out.flush()?;
+            }
+        }
         let event = tokio::select! {
             event = rx.recv() => match event {
                 Some(event) => event,

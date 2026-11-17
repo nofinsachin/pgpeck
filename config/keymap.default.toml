@@ -22,7 +22,7 @@
 # completion.trigger, completion.accept, completion.dismiss, completion.next,
 # completion.prev, help.scroll_up, help.scroll_down, help.page_up, help.page_down, and the
 # editor.* actions used below. Text is typed into the editor by any printable
-# key that has no binding (Ctrl+C is unbound: copy is Alt+C or Ctrl+Insert).
+# key that has no binding. Copy is Ctrl+C, Alt+C or Ctrl+Insert.
 
 [global]
 "ctrl+q" = "app.quit"
@@ -58,7 +58,7 @@
 "alt+z" = "transaction.rollback"
 "f5" = "session.refresh"
 "ctrl+r" = "query.run_statement"
-# Cancels the running query. Does nothing when no query is running.
+# Cancels the running query. When none is running, it copies the editor selection.
 "ctrl+c" = "query.cancel"
 
 [editor]
