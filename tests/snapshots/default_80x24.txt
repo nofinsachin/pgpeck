@@ -1,8 +1,5 @@
 ┌ Results ─────────────────────────────────┐┌ Session ─────────────────────────┐
-│No results yet. Run with Ctrl+R.          ││Not connected                     │
-│                                          ││                                  │
-│                                          ││                                  │
-│                                          ││                                  │
+│                                          ││Not connected                     │
 │                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
@@ -13,8 +10,11 @@
 │                                          ││Press C to connect to a database. │
 │                                          ││Press Esc for commands.           │
 │                                          │└──────────────────────────────────┘
-└──────────────────────────────────────────┘┌ Trends: largest tables ──────────┐
-┌ ▶ Editor ────────────────────────────────┐│Not connected                     │
+│                                          │┌ Trends: largest tables ──────────┐
+│                                          ││Not connected                     │
+│No results yet. Run with Ctrl+R.          ││                                  │
+└──────────────────────────────────────────┘│                                  │
+┌ ▶ Editor ────────────────────────────────┐│                                  │
 │1                                         ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │

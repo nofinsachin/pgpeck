@@ -19,8 +19,11 @@ const SIDE_MAX_WIDTH: u16 = 50;
 /// Heights in the right column, borders included. The context pane holds the
 /// welcome text before you connect, which is three lines.
 const CONTEXT_HEIGHT: u16 = 5;
-const TRENDS_HEIGHT: u16 = 7;
+const TRENDS_MIN_HEIGHT: u16 = 7;
 const SESSION_MIN_HEIGHT: u16 = 7;
+/// Enough for the full identity and server numbers. Used when the column has
+/// room for it and the trends still get their minimum.
+const SESSION_FULL_HEIGHT: u16 = 13;
 
 /// The editor is a strip at the bottom of the left column: this share of its
 /// height, and never less than `EDITOR_MIN_HEIGHT` (borders included).
@@ -98,13 +101,20 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     }
 
     if let Some(side) = side {
-        let with_trends =
-            state.show_trends && side.height >= SESSION_MIN_HEIGHT + CONTEXT_HEIGHT + TRENDS_HEIGHT;
+        let with_trends = state.show_trends
+            && side.height >= SESSION_MIN_HEIGHT + CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT;
         if with_trends {
+            // The trends take what the session and context leave.
+            let session_height =
+                if side.height >= SESSION_FULL_HEIGHT + CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT {
+                    SESSION_FULL_HEIGHT
+                } else {
+                    SESSION_MIN_HEIGHT
+                };
             let [session, context, trends] = Split::vertical([
-                Constraint::Min(SESSION_MIN_HEIGHT),
+                Constraint::Length(session_height),
                 Constraint::Length(CONTEXT_HEIGHT),
-                Constraint::Length(TRENDS_HEIGHT),
+                Constraint::Min(TRENDS_MIN_HEIGHT),
             ])
             .areas(side);
             areas.session = Some(session);
@@ -156,8 +166,9 @@ pub struct ResultsBody {
     pub rows: Rect,
 }
 
-/// Splits the inside of the results pane: a summary line, an optional tab
-/// line, the column header, a rule under it, then the rows.
+/// Splits the inside of the results pane: an optional tab line, the column
+/// header, a rule under it, the rows, then the summary line at the bottom,
+/// just above the editor.
 pub fn results_body(pane: Rect, with_tabs: bool) -> ResultsBody {
     let inner = pane.inner(Margin::new(1, 1));
     let row = |offset: u16| Rect {
@@ -166,15 +177,15 @@ pub fn results_body(pane: Rect, with_tabs: bool) -> ResultsBody {
         ..inner
     };
     let tab_height = u16::from(with_tabs);
-    let rows_top = 3 + tab_height;
+    let rows_top = 2 + tab_height;
     ResultsBody {
-        summary: row(0),
-        tabs: with_tabs.then(|| row(1)),
-        header: row(1 + tab_height),
-        rule: row(2 + tab_height),
+        summary: row(inner.height.saturating_sub(1)),
+        tabs: with_tabs.then(|| row(0)),
+        header: row(tab_height),
+        rule: row(1 + tab_height),
         rows: Rect {
             y: inner.y.saturating_add(rows_top).min(inner.bottom()),
-            height: inner.height.saturating_sub(rows_top),
+            height: inner.height.saturating_sub(rows_top + 1),
             ..inner
         },
     }

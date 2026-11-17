@@ -1,21 +1,21 @@
 ┌ Results ───────────────────────────────────────────┐┌ Session ─────────────────────────┐
-│No results yet. Run with Ctrl+R.                    ││Not connected                     │
+│                                                    ││Not connected                     │
 │                                                    ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │
 │         ┌────────────────────────── New connection ──────────────────────────┐         │
-│         │Passwords are never saved. You are asked for it next.               │         │
-│         │                                                                    │         │
+│         │Passwords are never saved. You are asked for it next.               │─────────┘
+│         │                                                                    │─────────┐
 │         │▶ Host        localhost                                             │         │
-│         │  Port        5432                                                  │         │
+│         │  Port        5432                                                  │atabase. │
 │         │  Database    (empty: same as the user)                             │         │
 │         │  User        alice                                                 │─────────┘
 │         │  Save as     (empty: do not save this connection)                  │─────────┐
 │         │  SSL mode    disable  (Space to change. TLS is not supported yet)  │         │
-│         │  Production  [ ] no  (Space to switch)                             │atabase. │
+│         │  Production  [ ] no  (Space to switch)                             │         │
 │         │                                                                    │         │
-│         │                                                                    │─────────┘
-└─────────│                                                                    │─────────┐
+│No result│                                                                    │         │
+└─────────│                                                                    │         │
 ┌ Editor ─│Tab next field  Enter connect  Esc back                             │         │
 │1        └────────────────────────────────────────────────────────────────────┘         │
 │                                                    ││                                  │

@@ -1,5 +1,5 @@
 ┌ ▶ Results ───────────────────────────────────────────────────┐┌ Session ─────────────────────────┐
-│No results yet. Run with Ctrl+R.                              ││Not connected                     │
+│                                                              ││Not connected                     │
 │            ┌───────────────────────────────── Help ─────────────────────────────────┐            │
 │            │results keys                                                            │            │
 │            │  ?                 help                  help.toggle                   │            │
@@ -10,16 +10,16 @@
 │            │  PageDown          page down             results.page_down             │            │
 │            │  PageUp            page up               results.page_up               │            │
 │            │  Right             columns right         results.scroll_right          │            │
-│            │  Up                row up                results.scroll_up             │            │
-│            │  [                 previous result       results.prev_tab              │            │
+│            │  Up                row up                results.scroll_up             │────────────┘
+│            │  [                 previous result       results.prev_tab              │────────────┐
 │            │  ]                 next result           results.next_tab              │            │
-│            │  c                 connect               connection.open               │────────────┘
-│            │  e                 edit                  focus.editor                  │────────────┐
-│            │  q                 quit                  app.quit                      │            │
-│            │  r                 run                   query.run_statement           │a database. │
-│            │                                                                        │mmands.     │
-└────────────│global keys                                                             │────────────┘
-┌ Editor ────│  Alt+1             focus context         focus.context                 │s ──────────┐
+│            │  c                 connect               connection.open               │a database. │
+│            │  e                 edit                  focus.editor                  │mmands.     │
+│            │  q                 quit                  app.quit                      │────────────┘
+│            │  r                 run                   query.run_statement           │s ──────────┐
+│No results y│                                                                        │            │
+└────────────│global keys                                                             │            │
+┌ Editor ────│  Alt+1             focus context         focus.context                 │            │
 │1           │  Alt+2             edit                  focus.editor                  │            │
 │            │  Alt+3             focus results         focus.results                 │            │
 │            │  Alt+4             focus session         focus.session                 │            │

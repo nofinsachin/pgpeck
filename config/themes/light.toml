@@ -1,23 +1,26 @@
-# Light theme, in the colors of the oxpecker bird: brown and tan for the body,
-# yellow, red, black and cream for the accents. Colors are names or #rrggbb.
-focus = "#7b4a21"          # brown
-error = "#b3261e"          # red
-null = "#9a8a78"
-dimmed = "#8a7560"
-keyword = "#9a6700"        # deep yellow, readable on light backgrounds
-number = "#b3261e"
-string = "#8b5a2b"
+# Light theme in the PostgreSQL palette: blues (#0064a5, #336791, #008bb9) and
+# greys (#585858, #666666, #848484) on white, with black text.
+# Error, warning and production keep red and orange so they stand out. Row
+# banding and the cursor line are faint tints of the palette blue.
+# Colors are names or #rrggbb.
+focus = "#0064a5"
+error = "#b3261e"
+null = "#848484"
+dimmed = "#666666"
+keyword = "#0064a5"
+number = "#336791"
+string = "#585858"
 status_prod = "#b3261e"
-status_fg = "#1e1611"
-status_bg = "#faf3e0"
-header_fg = "#9a6700"
-header_bg = "#faf3e0"
-row_alt_bg = "#f6ecd6"     # cream banding
-ok = "#7a5c00"
+status_fg = "#ffffff"
+status_bg = "#585858"
+header_fg = "#0064a5"
+header_bg = "#000000"
+row_alt_bg = "#eef3f7"
+ok = "#336791"
 warn = "#c4620a"
-label = "#9a6700"
-value = "#1e1611"          # near black
-line_number = "#b09a80"
-cursor_line_bg = "#efe0c0"
-background = "#faf3e0"     # cream
-border = "#b59a73"
+label = "#336791"
+value = "#000000"
+line_number = "#848484"
+cursor_line_bg = "#dbe7f1"
+background = "#ffffff"
+border = "#336791"

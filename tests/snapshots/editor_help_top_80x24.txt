@@ -1,19 +1,19 @@
 ┌ Results ─────────────────────────────────┐┌ Session ─────────────────────────┐
-│No results yet. Run with Ctrl+R.          ││Not connected                     │
+│                                          ││Not connected                     │
 │  ┌───────────────────────────────── Help ─────────────────────────────────┐  │
 │  │editor keys                                                             │  │
 │  │  Alt+/             show suggestions      completion.trigger            │  │
 │  │  Alt+C             copy                  editor.copy                   │  │
-│  │  Backspace         delete backward       editor.backspace              │  │
-│  │  Ctrl+A            select all            editor.select_all             │  │
+│  │  Backspace         delete backward       editor.backspace              │──┘
+│  │  Ctrl+A            select all            editor.select_all             │──┐
 │  │  Ctrl+End          end of text           editor.move_buffer_end        │  │
-│  │  Ctrl+Home         start of text         editor.move_buffer_start      │──┘
-│  │  Ctrl+Insert       copy                  editor.copy                   │──┐
-│  │  Ctrl+Left         word left             editor.move_word_left         │  │
-│  │  Ctrl+Right        word right            editor.move_word_right        │. │
+│  │  Ctrl+Home         start of text         editor.move_buffer_start      │. │
+│  │  Ctrl+Insert       copy                  editor.copy                   │  │
+│  │  Ctrl+Left         word left             editor.move_word_left         │──┘
+│  │  Ctrl+Right        word right            editor.move_word_right        │──┐
 │  │  Ctrl+Shift+End    select to text end    editor.select_buffer_end      │  │
-│  │  Ctrl+Shift+Home   select to text start  editor.select_buffer_start    │──┘
-└──│  Ctrl+Shift+Left   select word left      editor.select_word_left       │──┐
+│No│  Ctrl+Shift+Home   select to text start  editor.select_buffer_start    │  │
+└──│  Ctrl+Shift+Left   select word left      editor.select_word_left       │  │
 ┌ ▶│  Ctrl+Shift+Right  select word right     editor.select_word_right      │  │
 │1 │  Ctrl+Space        show suggestions      completion.trigger            │  │
 │  │  Ctrl+V            paste                 editor.paste                  │  │

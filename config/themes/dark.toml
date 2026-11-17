@@ -1,24 +1,27 @@
-# Dark theme: brown, yellow, red and cream accents on a pitch-black
-# background. Colors are names or #rrggbb.
+# Dark theme in the PostgreSQL palette: one dark grey background everywhere,
+# white text, and a single light blue (derived from #008bb9, which is too dark
+# to read on grey) for every blue element: keywords, focus, labels and the
+# column header. Error, warning and production keep red and orange tints.
+# Colors are names or #rrggbb.
 # Focus, errors and NULL are never conveyed by color alone (R20.9).
-focus = "#d9aa3c"          # yellow bill
-error = "#e5533d"          # red bill tip
-null = "#8c7b6b"
-dimmed = "#8c7b6b"
-keyword = "#d9aa3c"
-number = "#e5533d"
-string = "#d2b48c"         # tan
+focus = "#9bdcf5"
+error = "#ffb3a7"
+null = "#c4c4c4"
+dimmed = "#d0d0d0"
+keyword = "#9bdcf5"
+number = "#ffffff"
+string = "#d0d0d0"
 status_prod = "#c8321f"
 status_fg = "#ffffff"
-status_bg = "#000000"
-header_fg = "#d9aa3c"
-header_bg = "#000000"
-row_alt_bg = "#2b2119"     # dark brown banding
-ok = "#ffffff"             # white
-warn = "#e8892b"           # between yellow and red
-label = "#d9aa3c"
+status_bg = "#4a4a4a"
+header_fg = "#9bdcf5"
+header_bg = "#4a4a4a"
+row_alt_bg = "#404040"
+ok = "#ffffff"
+warn = "#ffc27a"
+label = "#9bdcf5"
 value = "#ffffff"
-line_number = "#7a6650"
-cursor_line_bg = "#3a2c20" # brown
-background = "#000000"     # pitch dark
-border = "#9c7a4d"         # tan lines between result columns
+line_number = "#c4c4c4"
+cursor_line_bg = "#555555"
+background = "#4a4a4a"
+border = "#000000"

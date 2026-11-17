@@ -1,20 +1,20 @@
 ┌ Results ───────────────────────────────────────────┐┌ Session ─────────────────────────┐
-│No results yet. Run with Ctrl+R.                    ││127.0.0.1  connected              │
+│                                                    ││127.0.0.1  connected              │
 │                                                    ││app · alice                       │
 │                                                    ││Conns 3 here · 12/100 on server   │
 │                                                    ││1.2 GB · cache hit 99.2%          │
 │                                                    ││127.0.0.1:5432  PostgreSQL 16.2   │
-│                                                    ││TLS off                           │
-│                                                    ││                                  │
-│                                                    ││                                  │
 │                                                    │└──────────────────────────────────┘
 │                                                    │┌ Context ─────────────────────────┐
 │                                                    ││Buffer     Buffer 1               │
 │                                                    ││Statement  none under the cursor  │
 │                                                    ││                                  │
 │                                                    │└──────────────────────────────────┘
-└────────────────────────────────────────────────────┘┌ Trends: largest tables ──────────┐
-┌ ▶ Editor ──────────────────────────────────────────┐│No tables to show                 │
+│                                                    │┌ Trends: largest tables ──────────┐
+│                                                    ││No tables to show                 │
+│No results yet. Run with Ctrl+R.                    ││                                  │
+└────────────────────────────────────────────────────┘│                                  │
+┌ ▶ Editor ──────────────────────────────────────────┐│                                  │
 │1                                                   ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │

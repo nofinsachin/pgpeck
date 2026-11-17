@@ -1,8 +1,5 @@
 ┌ Results ─────────────────────────────────┐┌ Session ─────────────────────────┐
-│No results yet. Run with Ctrl+R.          ││Not connected                     │
-│                                          ││                                  │
-│                                          ││                                  │
-│                                          ││                                  │
+│                                          ││Not connected                     │
 │                                          ││                                  │
 │                                          ││                                  │
 │                                          ││                                  │
@@ -12,9 +9,12 @@
 │                                          ││Welcome to pgpeck.                │
 │                                          ││Press C to connect to a database. │
 │                                          ││Press Esc for commands.           │
-│  ┌────────────┐                          │└──────────────────────────────────┘
-└──│  desc    kw│──────────────────────────┘┌ Trends: largest tables ──────────┐
-┌ ▶│▶ delete  kw│──────────────────────────┐│Not connected                     │
+│                                          │└──────────────────────────────────┘
+│                                          │┌ Trends: largest tables ──────────┐
+│                                          ││Not connected                     │
+│No┌────────────┐Run with Ctrl+R.          ││                                  │
+└──│  desc    kw│──────────────────────────┘│                                  │
+┌ ▶│▶ delete  kw│──────────────────────────┐│                                  │
 │1 │  declare kw│                          ││                                  │
 │2 │  default kw│                          ││                                  │
 │3 └────────────┘                          ││                                  │

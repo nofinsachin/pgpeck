@@ -1,20 +1,20 @@
 ┌ Results ───────────────────────────────────────────┐┌ ▶ Session ───────────────────────┐
-│No results yet. Run with Ctrl+R.                    ││127.0.0.1  connected              │
+│                                                    ││127.0.0.1  connected              │
 │                                                    ││app · alice                       │
 │                                                    ││Reading statistics…               │
 │                                                    ││127.0.0.1:5432  PostgreSQL 16.2   │
 │                                                    ││TLS off                           │
-│                                                    ││                                  │
-│              ┌───────────────────── Change session ─────────────────────┐              │
+│                                                    │└──────────────────────────────────┘
+│              ┌───────────────────── Change session ─────────────────────┐──────────────┐
 │              │Saving connects again. You may be asked for the password. │              │
-│              │                                                          │──────────────┘
-│              │  Database  app                                           │──────────────┐
-│              │▶ User      alice                                         │              │
 │              │                                                          │r the cursor  │
+│              │  Database  app                                           │              │
+│              │▶ User      alice                                         │──────────────┘
+│              │                                                          │les ──────────┐
 │              │                                                          │              │
-│              │Tab next field  Enter reconnect  Esc cancel               │──────────────┘
-└──────────────└──────────────────────────────────────────────────────────┘les ──────────┐
-┌ Editor ────────────────────────────────────────────┐│Reading…                          │
+│No results yet│Tab next field  Enter reconnect  Esc cancel               │              │
+└──────────────└──────────────────────────────────────────────────────────┘              │
+┌ Editor ────────────────────────────────────────────┐│                                  │
 │1                                                   ││                                  │
 │                                                    ││                                  │
 │                                                    ││                                  │

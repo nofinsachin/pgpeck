@@ -17,6 +17,16 @@ use crate::results::Tab;
 use crate::sql::{self, Token, TokenKind};
 use crate::theme::Theme;
 
+/// Blank a popup's area in the theme's own colors. `Clear` alone resets the
+/// cells to the terminal's default background.
+fn clear(frame: &mut Frame, theme: &Theme, area: Rect) {
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::new().style(Style::new().fg(theme.value).bg(theme.background)),
+        area,
+    );
+}
+
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
     // Paint the whole screen first. Text without its own color uses `value`,
@@ -823,10 +833,13 @@ fn draw_grid(
         .fg(theme.header_fg)
         .bg(theme.header_bg)
         .add_modifier(Modifier::BOLD);
+    // The border color can equal the header fill, so the header's own
+    // separators use the header text color.
+    let header_line = Style::new().fg(theme.header_fg).bg(theme.header_bg);
     let mut header = Vec::new();
     for (n, (index, width)) in visible.iter().enumerate() {
         if n > 0 {
-            header.push(Span::styled(" │ ", line));
+            header.push(Span::styled(" │ ", header_line));
         }
         header.push(Span::styled(
             fit(&clean_cell(&set.columns[*index]), *width),
@@ -1113,7 +1126,7 @@ fn draw_completion(frame: &mut Frame, app: &App, theme: &Theme, pane: Rect) {
         })
         .collect();
     let block = Block::bordered().border_style(Style::new().fg(theme.focus));
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     frame.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
@@ -1303,7 +1316,7 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
     let items = picker.items(&app.state.profiles, reconnect.as_deref());
     let visible = items.len().clamp(1, 8);
     let popup = layout::centered(area, 72, visible as u16 + 6);
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     let block = Block::bordered()
         .title(" Connect ")
         .title_alignment(Alignment::Center)
@@ -1407,7 +1420,7 @@ fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker,
     let label = Style::new().fg(theme.label);
     let value = Style::new().fg(theme.value);
     let popup = layout::centered(area, 90, area.height.saturating_sub(4).clamp(8, 22));
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     let block = Block::bordered()
         .title(match (&find.columns_of, find.kind) {
             (Some((schema, relation)), _) => format!(" Find: columns of {schema}.{relation} "),
@@ -1589,7 +1602,7 @@ fn draw_form(
 ) {
     let dim = Style::new().fg(theme.dimmed);
     let popup = layout::centered(area, 70, 15);
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     let block = Block::bordered()
         .title(if form.editing.is_some() {
             " Edit connection "
@@ -1716,7 +1729,7 @@ fn draw_session_form(
 ) {
     let dim = Style::new().fg(theme.dimmed);
     let popup = layout::centered(area, 60, 9);
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     let block = Block::bordered()
         .title(" Change session ")
         .title_alignment(Alignment::Center)
@@ -1813,7 +1826,7 @@ fn draw_confirm(
     let shown = statement.len().min(6);
     let height = (shown + reasons.len() + 8) as u16;
     let popup = layout::centered(area, 72, height);
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     let block = Block::bordered()
         .title(" Confirm ")
         .title_alignment(Alignment::Center)
@@ -1896,7 +1909,7 @@ fn draw_password(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         format!("{user}@{}:{}", c.profile.host, c.profile.port)
     });
     let popup = layout::centered(area, 60, 8);
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     let block = Block::bordered()
         .title(" Password ")
         .title_alignment(Alignment::Center)
@@ -1992,7 +2005,7 @@ fn draw_help(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             .title_bottom(footer)
             .title_alignment(Alignment::Center);
     }
-    frame.render_widget(Clear, popup);
+    clear(frame, theme, popup);
     frame.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
