@@ -809,3 +809,93 @@ async fn statements_are_saved_to_a_private_history_file_without_their_rows() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn pecking_a_table_shows_its_card_and_following_a_key_shows_the_next() {
+    let url = database!();
+    // The tables are made on a second connection, so the test needs no
+    // confirmation for the DROP.
+    let uri = parse_uri(&url).expect("parse");
+    let user = uri.profile.user.clone().expect("user");
+    let (setup, _) = pgpeck::db::connect(&uri.profile, &user, uri.password.as_ref(), |_| {})
+        .await
+        .expect("setup connection");
+    let made = pgpeck::db::run(
+        &setup,
+        "drop schema if exists pgpeck_peck_test cascade;
+         create schema pgpeck_peck_test;
+         create table pgpeck_peck_test.regions (id int primary key, name text not null);
+         create table pgpeck_peck_test.stores (
+             id int primary key, region_id int not null references pgpeck_peck_test.regions (id));",
+        1,
+        &Default::default(),
+    )
+    .await;
+    assert!(made.error.is_none(), "{:?}", made.error);
+
+    let mut h = Harness::new();
+    h.connect_with_uri(&url).await;
+    h.until("the schema", |a| {
+        a.state
+            .active_connection()
+            .and_then(|c| c.catalog.as_ref())
+            .is_some_and(|c| c.objects.iter().any(|o| o.schema == "pgpeck_peck_test"))
+    })
+    .await;
+
+    h.key(KeyCode::Char('5'), KeyModifiers::ALT);
+    h.type_text("peck pgpeck_peck_test.stores");
+    assert!(
+        h.screen().contains("pgpeck_peck_test.stores"),
+        "{}",
+        h.screen()
+    );
+    h.enter();
+    h.until("the card", |a| {
+        a.state
+            .card
+            .as_ref()
+            .is_some_and(|c| matches!(c.current().load, pgpeck::card::Load::Ready(_)))
+    })
+    .await;
+    let screen = h.screen();
+    for expected in [
+        "pgpeck_peck_test.stores · table",
+        "COLUMNS 2",
+        "PK id",
+        "FK region_id",
+        "INDEXES 1",
+        "stores_pkey",
+        "REFERENCES 1",
+        "pgpeck_peck_test.regions (id)",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+
+    // Enter follows the foreign key to the other table.
+    h.enter();
+    h.until("the second card", |a| {
+        a.state.card.as_ref().is_some_and(|c| {
+            c.trail.len() == 2 && matches!(c.current().load, pgpeck::card::Load::Ready(_))
+        })
+    })
+    .await;
+    let screen = h.screen();
+    assert!(
+        screen.contains("pgpeck_peck_test.regions · table"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("none: this table points at no other"),
+        "{screen}"
+    );
+
+    let dropped = pgpeck::db::run(
+        &setup,
+        "drop schema pgpeck_peck_test cascade",
+        1,
+        &Default::default(),
+    )
+    .await;
+    assert!(dropped.error.is_none(), "{:?}", dropped.error);
+}

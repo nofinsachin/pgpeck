@@ -15,9 +15,9 @@
 │No resul│Run it? Type y or yes:                                                │        │
 └────────│Enter run (after y or yes)  Esc cancel                                │────────┘
 ┌ ▶ Edito└──────────────────────────────────────────────────────────────────────┘────────┐
-│1 DELETE FROM orders                                ││peck> a table or view name        │
-│                                                    ││peck orders  draws its foreign key│
-│                                                    ││Enter draws it. Esc leaves.       │
+│1 DELETE FROM orders                                ││peck> peck a table, view or functi│
+│                                                    ││Enter shows its card              │
+│                                                    ││                                  │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
 Ctrl+R run  Esc commands  Ctrl+O connect

@@ -15,9 +15,9 @@
 │No resul│Enter connect  Ctrl+E edit  Esc close  Ctrl+S save address as profile │        │
 └────────└──────────────────────────────────────────────────────────────────────┘────────┘
 ┌ Editor ────────────────────────────────────────────┐┌ Peck ────────────────────────────┐
-│1                                                   ││peck> a table or view name        │
-│                                                    ││peck orders  draws its foreign key│
-│                                                    ││Enter draws it. Esc leaves.       │
+│1                                                   ││peck> peck a table, view or functi│
+│                                                    ││Enter shows its card              │
+│                                                    ││                                  │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
 C connect  F find  H history  R run  E edit  N new buffer  Q quit  ? help

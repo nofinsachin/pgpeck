@@ -5,11 +5,13 @@ use ratatui::layout::Rect;
 
 use std::time::Instant;
 
+use crate::card::Card;
 use crate::catalog::{Catalog, Object as CatalogObject};
 use crate::command::{Command, DocId};
 use crate::complete::{self, Candidate, KeywordSource};
 use crate::config::Config;
 use crate::db::{ConnId, ConnectionInfo, Paging, SessionStats, TxState};
+use crate::describe::Target;
 use crate::editor::{display_col, Buffer, EditCmd, Motion, Pos};
 use crate::events::{Background, Event};
 use crate::form::{ConnectForm, SessionForm};
@@ -19,7 +21,6 @@ use crate::layout;
 use crate::peck;
 use crate::picker::{self, Picker};
 use crate::profile::{self, Profile, Profiles};
-use crate::relations;
 use crate::results::{PageRequest, Results};
 use crate::secrets::{Secret, Source};
 use crate::sql;
@@ -87,8 +88,8 @@ pub struct State {
     pub next_conn: ConnId,
     /// Saved connection profiles.
     pub profiles: Profiles,
-    /// The relationship diagram shown in place of the results, when open.
-    pub diagram: Option<relations::View>,
+    /// The card of a pecked object, shown in place of the results.
+    pub card: Option<Card>,
     /// What is typed in the peck command line.
     pub peck: PeckState,
     /// The statements run before, oldest first.
@@ -105,6 +106,8 @@ pub struct State {
 
 /// Rows a sample `SELECT` asks for (R9.7).
 const SAMPLE_ROWS: usize = 100;
+/// Objects the peck line remembers.
+const RECENT_PECKS: usize = 8;
 
 /// Whether a command tag means the schema may have changed.
 fn changes_schema(tag: &str) -> bool {
@@ -184,8 +187,11 @@ pub enum Dialog {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PeckState {
     pub input: String,
-    /// Which of the matching tables Enter opens.
+    /// Which of the matching objects Enter opens. With nothing typed it
+    /// counts through the recent pecks.
     pub selected: usize,
+    /// Objects pecked before, newest first.
+    pub recent: Vec<Target>,
     /// The last answer, for example why a command did nothing.
     pub message: Option<String>,
 }
@@ -327,7 +333,7 @@ impl State {
             connections: Vec::new(),
             next_conn: 1,
             profiles: Profiles::default(),
-            diagram: None,
+            card: None,
             peck: PeckState::default(),
             history: Vec::new(),
             history_path: None,
@@ -617,26 +623,32 @@ impl App {
                 Action::FocusCommands,
                 Action::HelpToggle,
             ],
-            // The way back is offered only after following a key.
-            Pane::Results
-                if self
-                    .state
-                    .diagram
-                    .as_ref()
-                    .is_some_and(|v| v.trail.len() > 1) =>
-            {
-                &[
-                    Action::DialogSubmit,
-                    Action::DialogBackspace,
-                    Action::RelationSample,
-                    Action::DialogCancel,
-                ]
+            // Sample rows are offered for tables and views, not functions, and
+            // the way back only after following a key.
+            Pane::Results if self.state.card.is_some() => {
+                let card = self.state.card.as_ref();
+                let back = card.is_some_and(|c| c.trail.len() > 1);
+                let sample = card.is_some_and(|c| !c.current().target.is_function());
+                match (back, sample) {
+                    (true, true) => &[
+                        Action::DialogSubmit,
+                        Action::DialogBackspace,
+                        Action::CardSample,
+                        Action::DialogCancel,
+                    ],
+                    (true, false) => &[
+                        Action::DialogSubmit,
+                        Action::DialogBackspace,
+                        Action::DialogCancel,
+                    ],
+                    (false, true) => &[
+                        Action::DialogSubmit,
+                        Action::CardSample,
+                        Action::DialogCancel,
+                    ],
+                    (false, false) => &[Action::DialogSubmit, Action::DialogCancel],
+                }
             }
-            Pane::Results if self.state.diagram.is_some() => &[
-                Action::DialogSubmit,
-                Action::RelationSample,
-                Action::DialogCancel,
-            ],
             Pane::Results => &[
                 Action::ConnectionOpen,
                 Action::QueryRun,
@@ -654,13 +666,13 @@ impl App {
     }
 
     /// What a hint says for `action`. The dialog actions mean something more
-    /// specific in the peck line and in the diagram.
+    /// specific in the peck line and on a card.
     pub fn hint_label(&self, action: Action) -> &'static str {
-        let diagram = self.state.focus == Pane::Results && self.state.diagram.is_some();
-        match (action, self.state.focus, diagram) {
-            (Action::DialogSubmit, _, true) => "go to table",
+        let card = self.state.focus == Pane::Results && self.state.card.is_some();
+        match (action, self.state.focus, card) {
+            (Action::DialogSubmit, _, true) => "peck the table",
             (Action::DialogBackspace, _, true) => "back",
-            (Action::DialogCancel, _, true) => "close diagram",
+            (Action::DialogCancel, _, true) => "close",
             (Action::DialogSubmit, Pane::Peck, _) => "draw",
             (Action::DialogNext, Pane::Peck, _) => "next match",
             (Action::FocusCommands, Pane::Peck, _) => "leave",
@@ -668,11 +680,11 @@ impl App {
         }
     }
 
-    /// The scope whose keys the focused pane uses. The diagram, when open, has
-    /// its own keys in place of the results'.
+    /// The scope whose keys the focused pane uses. A card, when open, has its
+    /// own keys in place of the results'.
     fn key_scope(&self) -> Scope {
-        if self.state.focus == Pane::Results && self.state.diagram.is_some() {
-            Scope::Relations
+        if self.state.focus == Pane::Results && self.state.card.is_some() {
+            Scope::Card
         } else {
             self.state.focus.scope()
         }
@@ -896,6 +908,17 @@ impl App {
             Action::ResultsDown => self.scroll_results(1, false),
             Action::ResultsPageUp => self.scroll_results(-1, true),
             Action::ResultsPageDown => self.scroll_results(1, true),
+            Action::ResultsFirstRow if self.state.card.is_some() => {
+                if let Some(card) = &mut self.state.card {
+                    card.to_top();
+                }
+            }
+            Action::ResultsLastRow if self.state.card.is_some() => {
+                let visible = self.card_visible_rows();
+                if let Some(card) = &mut self.state.card {
+                    card.to_bottom(visible);
+                }
+            }
             Action::ResultsFirstRow => {
                 let limit = self.config.results.row_limit;
                 let request = self.results_mut().and_then(|r| r.first_row_paged(limit));
@@ -929,7 +952,7 @@ impl App {
                 }
             }
             // Dialogs handle these themselves. In the peck line and the
-            // diagram they are the pane's own keys.
+            // card they are the pane's own keys.
             Action::DialogNext
             | Action::DialogPrev
             | Action::DialogSubmit
@@ -937,7 +960,7 @@ impl App {
             | Action::DialogBackspace
             | Action::DialogClear => match self.state.focus {
                 Pane::Peck => self.peck_action(action),
-                Pane::Results => self.diagram_action(action),
+                Pane::Results => self.card_action(action),
                 _ => {}
             },
             Action::PickerSaveProfile
@@ -945,9 +968,9 @@ impl App {
             | Action::FindSample
             | Action::FindJump(_)
             | Action::FindColumns
-            | Action::FindRelations => {}
-            // Typing and selecting belong to the peck line and the diagram.
-            Action::RelationSample => self.diagram_action(action),
+            | Action::FindPeck => {}
+            // Typing and selecting belong to the peck line and the card.
+            Action::CardSample => self.card_action(action),
             Action::FindOpen => self.open_find(),
             Action::HistoryOpen => self.open_history(),
             Action::CompletionTrigger => self.refresh_completion(true),
@@ -1030,76 +1053,101 @@ impl App {
         true
     }
 
-    /// The foreign keys of the table the view shows. Empty before the schema
-    /// has been read.
-    pub fn relation_links<'a>(
-        connections: &'a [Connection],
-        conn: Option<ConnId>,
-        view: &relations::View,
-    ) -> Vec<relations::Link<'a>> {
-        conn.and_then(|id| connections.iter().find(|c| c.id == id))
-            .and_then(|c| c.catalog.as_ref())
-            .map_or_else(Vec::new, |catalog| view.links(catalog))
-    }
-
-    /// Shows the foreign keys of a table in place of the results.
-    fn open_diagram(&mut self, schema: &str, table: &str) {
+    /// Shows the card of an object in place of the results and reads its
+    /// facts from the server.
+    fn open_card(&mut self, target: Target) {
         self.state.dialog = None;
-        self.state.diagram = Some(relations::View::new(schema, table));
         self.state.show_results = true;
         self.state.focus = Pane::Results;
+        self.state.card = Some(Card::new(target.clone()));
+        self.request_describe(&target);
     }
 
-    /// The keys of the diagram: select, follow, go back, sample, close.
-    fn diagram_action(&mut self, action: Action) {
-        let conn = self.state.doc().connection;
-        let Some(view) = &mut self.state.diagram else {
+    /// Asks for the facts about `target`, or records why it cannot. Like the
+    /// statistics read, it waits for a quiet connection.
+    fn request_describe(&mut self, target: &Target) {
+        let Some(conn) = self.state.doc().connection else {
+            return self.card_failed(target, "Not connected. Connect first");
+        };
+        let busy = self.state.running.is_some();
+        let state = self
+            .state
+            .connection(conn)
+            .map(|c| (c.status.clone(), c.tx));
+        match state {
+            Some((ConnStatus::Connected, tx)) if !busy && tx != TxState::Failed => {
+                self.pending.push(Command::Describe {
+                    conn,
+                    target: target.clone(),
+                });
+            }
+            Some((ConnStatus::Connected, TxState::Failed)) => {
+                self.card_failed(target, "The transaction failed. Roll it back first");
+            }
+            Some((ConnStatus::Connected, _)) => {
+                self.card_failed(target, "A statement is running. Try again when it finishes");
+            }
+            _ => self.card_failed(target, "Not connected. Connect first"),
+        }
+    }
+
+    fn card_failed(&mut self, target: &Target, message: &str) {
+        if let Some(card) = &mut self.state.card {
+            card.set_load(target, Err(message.to_string()));
+        }
+    }
+
+    /// Rows of the card visible at once: the results pane without its borders
+    /// and the footer line.
+    fn card_visible_rows(&self) -> usize {
+        let areas = layout::compute(self.screen(), &self.state, &self.config);
+        areas
+            .results
+            .map_or(10, |rect| usize::from(rect.height.saturating_sub(3)))
+            .max(1)
+    }
+
+    /// The keys of a card: select, peck the table a key points at, go back,
+    /// sample, close.
+    fn card_action(&mut self, action: Action) {
+        let visible = self.card_visible_rows();
+        let Some(card) = &mut self.state.card else {
             return;
         };
         match action {
-            Action::DialogNext | Action::DialogPrev => {
-                let count = Self::relation_links(&self.state.connections, conn, view).len();
-                if action == Action::DialogNext {
-                    view.select_next(count);
-                } else {
-                    view.select_previous(count);
-                }
-            }
+            Action::DialogNext => card.select(1, visible),
+            Action::DialogPrev => card.select(-1, visible),
             Action::DialogSubmit => {
-                let target = Self::relation_links(&self.state.connections, conn, view)
-                    .get(view.selected)
-                    .copied();
-                if let Some(link) = target {
-                    view.follow(&link);
+                if let Some(target) = card.selected_target() {
+                    card.follow(target.clone());
+                    self.request_describe(&target);
                 }
             }
             Action::DialogBackspace => {
-                view.back();
+                card.back();
             }
-            Action::DialogCancel => self.state.diagram = None,
-            Action::RelationSample => self.sample_related(),
+            Action::DialogCancel => self.state.card = None,
+            Action::CardSample => self.sample_pecked(),
             _ => {}
         }
     }
 
-    /// S selects sample rows of the selected table and runs the query.
-    fn sample_related(&mut self) {
-        let Some(view) = &self.state.diagram else {
+    /// S selects sample rows of the pecked table or view and runs the query.
+    fn sample_pecked(&mut self) {
+        let Some(card) = &self.state.card else {
             return;
         };
-        let conn = self.state.doc().connection;
-        let links = Self::relation_links(&self.state.connections, conn, view);
-        let Some(link) = links.get(view.selected) else {
-            return;
-        };
-        let other = link.other();
-        self.state.diagram = None;
+        let target = card.current().target.clone();
+        if !target.kind.is_relation() {
+            return self.notice("Sample rows are available for tables and views");
+        }
+        self.state.card = None;
         self.state.focus = Pane::Editor;
         let opts = self.config.editor.options();
         let name = format!(
             "{}.{}",
-            crate::catalog::quote(&other.0),
-            crate::catalog::quote(&other.1)
+            crate::catalog::quote(&target.schema),
+            crate::catalog::quote(&target.name)
         );
         let statement = format!("SELECT * FROM {name} LIMIT {SAMPLE_ROWS};");
         let editor = self.state.editor_mut();
@@ -1113,7 +1161,7 @@ impl App {
 
     /// The tables and views the peck line offers for what is typed.
     pub fn peck_matches(&self) -> Vec<&CatalogObject> {
-        let peck::Command::Table(query) = peck::parse(&self.state.peck.input) else {
+        let peck::Command::Object(query) = peck::parse(&self.state.peck.input) else {
             return Vec::new();
         };
         self.state
@@ -1127,7 +1175,11 @@ impl App {
     fn peck_action(&mut self, action: Action) {
         match action {
             Action::DialogNext | Action::DialogPrev => {
-                let count = self.peck_matches().len();
+                let count = if matches!(peck::parse(&self.state.peck.input), peck::Command::Empty) {
+                    self.state.peck.recent.len()
+                } else {
+                    self.peck_matches().len()
+                };
                 let peck = &mut self.state.peck;
                 if count > 0 {
                     peck.selected = if action == Action::DialogNext {
@@ -1142,19 +1194,48 @@ impl App {
                 self.state.peck.selected = 0;
                 self.state.peck.message = None;
             }
-            Action::DialogClear => self.state.peck = PeckState::default(),
+            Action::DialogClear => {
+                let peck = &mut self.state.peck;
+                peck.input.clear();
+                peck.selected = 0;
+                peck.message = None;
+            }
             Action::DialogSubmit => self.run_peck(),
             _ => {}
         }
     }
 
+    /// Pecks an object: shows its card and remembers it.
+    fn peck(&mut self, target: Target) {
+        let recent = &mut self.state.peck.recent;
+        recent.retain(|t| t != &target);
+        recent.insert(0, target.clone());
+        recent.truncate(RECENT_PECKS);
+        self.open_card(target);
+    }
+
     fn run_peck(&mut self) {
         let message = match peck::parse(&self.state.peck.input) {
             peck::Command::Empty => {
-                Some("Type a table or view, for example: peck orders".to_string())
+                // Nothing typed: Enter pecks the chosen recent object.
+                match self
+                    .state
+                    .peck
+                    .recent
+                    .get(self.state.peck.selected)
+                    .cloned()
+                {
+                    Some(target) => {
+                        self.peck(target);
+                        None
+                    }
+                    None => {
+                        Some("Type a table, view or function, for example: peck orders".to_string())
+                    }
+                }
             }
             peck::Command::NotBuilt(word) => Some(format!("peck {word} is not built yet")),
-            peck::Command::Table(query) => {
+            peck::Command::Object(query) => {
                 let connection = self
                     .state
                     .doc()
@@ -1168,13 +1249,13 @@ impl App {
                         let chosen = matches
                             .get(self.state.peck.selected)
                             .or(matches.first())
-                            .map(|o| (o.schema.clone(), o.name.clone()));
+                            .and_then(|o| Target::from_object(o));
                         match chosen {
-                            Some((schema, table)) => {
-                                self.open_diagram(&schema, &table);
+                            Some(target) => {
+                                self.peck(target);
                                 None
                             }
-                            None => Some(format!("No table or view matches \"{query}\"")),
+                            None => Some(format!("No table, view or function matches \"{query}\"")),
                         }
                     }
                 }
@@ -1486,15 +1567,14 @@ impl App {
                     p.selected = 0;
                 }
             }
-            (Action::FindRelations, Some(Dialog::Find(p))) => {
+            (Action::FindPeck, Some(Dialog::Find(p))) => {
                 let conn = self.state.docs[self.state.active].connection;
                 let chosen = Self::find_results(&self.state.connections, conn, p)
                     .get(p.selected)
-                    .filter(|o| o.kind.is_relation())
-                    .map(|o| (o.schema.clone(), o.name.clone()));
+                    .and_then(|o| Target::from_object(o));
                 match chosen {
-                    Some((schema, table)) => self.open_diagram(&schema, &table),
-                    None => self.notice("Relationships are shown for a table or view"),
+                    Some(target) => self.peck(target),
+                    None => self.notice("Peck a table, view or function"),
                 }
             }
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
@@ -1880,8 +1960,8 @@ impl App {
                     d.results = Some(Results::new(output));
                     self.state.show_results = true;
                 }
-                // New results take the place of a diagram.
-                self.state.diagram = None;
+                // New results take the place of a card.
+                self.state.card = None;
                 if has_rows && active_doc {
                     self.state.focus = Pane::Results;
                 }
@@ -1934,6 +2014,19 @@ impl App {
                     self.notice(format!(
                         "Could not read more rows: {message}. Run the query again"
                     ));
+                }
+            }
+            Background::Described {
+                conn: _,
+                target,
+                result,
+            } => {
+                let visible = self.card_visible_rows();
+                if let Some(card) = &mut self.state.card {
+                    let result = result.map_err(|e| e.message);
+                    if card.set_load(&target, result) {
+                        card.reveal(visible);
+                    }
                 }
             }
             Background::Stats { conn, result } => {
@@ -2135,6 +2228,14 @@ impl App {
     }
 
     fn scroll_results(&mut self, direction: isize, page: bool) {
+        if self.state.card.is_some() {
+            let visible = self.card_visible_rows();
+            let step = if page { visible as isize } else { 1 };
+            if let Some(card) = &mut self.state.card {
+                card.scroll(direction * step, visible);
+            }
+            return;
+        }
         let rows = self.results_page_rows();
         let step = if page { rows as isize } else { 1 };
         let limit = self.config.results.row_limit;
@@ -4659,16 +4760,6 @@ mod tests {
                 object(Kind::Column, "public", "id", Some("orders")),
                 object(Kind::Function, "public", "refresh", None),
             ],
-            foreign_keys: vec![crate::catalog::foreign_key_from_row([
-                "items_order_fk",
-                "public",
-                "items",
-                "order_id",
-                "public",
-                "orders",
-                "id",
-            ])
-            .expect("key")],
         }
     }
 
@@ -4860,52 +4951,209 @@ mod tests {
         assert_eq!(a.find_items(f).len(), 3);
     }
 
-    #[test]
-    fn alt_z_opens_the_diagram_in_place_of_the_results_and_enter_follows_a_key() {
+    /// What the server would say about `public.orders`, which points at
+    /// `sales.customers`.
+    fn orders_detail() -> crate::describe::Detail {
+        let cells = |items: &[&str]| -> crate::describe::Row {
+            items.iter().map(|c| Some((*c).to_string())).collect()
+        };
+        let rows = vec![
+            cells(&[
+                "head", "r", "app", "", "100", "4096", "2048", "2048", "", "p",
+            ]),
+            cells(&[
+                "col", "1", "id", "bigint", "true", "", "", "true", "false", "",
+            ]),
+            cells(&[
+                "col",
+                "2",
+                "customer_id",
+                "bigint",
+                "true",
+                "",
+                "",
+                "false",
+                "true",
+                "",
+            ]),
+            cells(&[
+                "fk",
+                "orders_customer_fk",
+                "customer_id",
+                "sales",
+                "customers",
+                "id",
+                "c",
+                "a",
+                "true",
+                "",
+            ]),
+        ];
+        crate::describe::Detail::Relation(Box::new(
+            crate::describe::relation_from_rows("public", "orders", &rows).expect("found"),
+        ))
+    }
+
+    fn describes(commands: &[Command]) -> Vec<crate::describe::Target> {
+        commands
+            .iter()
+            .filter_map(|c| match c {
+                Command::Describe { target, .. } => Some(target.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn with_catalog() -> (App, ConnId) {
         let mut a = app();
         let conn = connected(&mut a);
         a.update(Event::Background(Background::Catalog {
             conn,
             result: Ok(sample_catalog()),
         }));
+        (a, conn)
+    }
+
+    #[test]
+    fn alt_z_pecks_the_selected_object_and_its_card_replaces_the_results() {
+        let (mut a, conn) = with_catalog();
         ctrl(&mut a, 'p');
         type_text(&mut a, "public.orders");
-        alt(&mut a, 'z');
+        let commands = send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
         assert!(a.state.dialog.is_none(), "the find window closes");
         assert_eq!(a.state.focus, Pane::Results);
-        let view = a.state.diagram.as_ref().expect("the diagram");
+        let target = crate::describe::Target::relation("public", "orders");
+        assert_eq!(describes(&commands), std::slice::from_ref(&target));
+        let card = a.state.card.as_ref().expect("the card");
+        assert_eq!(card.current().load, crate::card::Load::Loading);
+        // The answer fills the card in.
+        a.update(Event::Background(Background::Described {
+            conn,
+            target: target.clone(),
+            result: Ok(orders_detail()),
+        }));
+        let card = a.state.card.as_ref().expect("the card");
+        assert!(matches!(card.current().load, crate::card::Load::Ready(_)));
         assert_eq!(
-            view.current(),
-            &("public".to_string(), "orders".to_string())
+            card.selected_target(),
+            Some(crate::describe::Target::relation("sales", "customers"))
         );
-        // items.order_id points at orders.id, so it is listed as incoming.
-        let links = App::relation_links(&a.state.connections, Some(conn), view);
-        assert_eq!(links.len(), 1);
-        assert!(!links[0].outgoing);
-        press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(a.state.diagram.as_ref().expect("open").current().1, "items");
-        press(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn enter_pecks_the_table_a_key_points_at_and_backspace_returns_and_esc_closes() {
+        let (mut a, conn) = with_catalog();
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "public.orders");
+        send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        let orders = crate::describe::Target::relation("public", "orders");
+        a.update(Event::Background(Background::Described {
+            conn,
+            target: orders,
+            result: Ok(orders_detail()),
+        }));
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let customers = crate::describe::Target::relation("sales", "customers");
+        assert_eq!(describes(&commands), std::slice::from_ref(&customers));
+        assert_eq!(a.state.card.as_ref().expect("card").trail.len(), 2);
+        // A failure is shown on the card instead of leaving it empty.
+        a.update(Event::Background(Background::Described {
+            conn,
+            target: customers,
+            result: Err(crate::db::DbError::new("sales.customers no longer exists")),
+        }));
+        assert!(matches!(
+            a.state.card.as_ref().expect("card").current().load,
+            crate::card::Load::Failed(_)
+        ));
+        send(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
         assert_eq!(
-            a.state.diagram.as_ref().expect("open").current().1,
+            a.state.card.as_ref().expect("card").current().target.name,
             "orders"
         );
-        press(&mut a, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(a.state.diagram.is_none());
+        send(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(a.state.card.is_none());
         assert_eq!(a.state.focus, Pane::Results, "the results are back");
     }
 
     #[test]
-    fn running_a_query_replaces_the_diagram_with_its_results() {
-        let mut a = app();
-        let conn = connected(&mut a);
-        a.update(Event::Background(Background::Catalog {
-            conn,
-            result: Ok(sample_catalog()),
-        }));
+    fn a_function_can_be_pecked_by_name() {
+        let (mut a, _) = with_catalog();
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "refresh");
+        let commands = send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        let targets = describes(&commands);
+        assert_eq!(targets.len(), 1);
+        assert!(targets[0].is_function() && targets[0].name == "refresh");
+        // Sample rows make no sense for a function.
+        send(&mut a, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(a.state.card.is_some());
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("tables and views")));
+    }
+
+    #[test]
+    fn alt_z_on_a_column_or_schema_says_what_can_be_pecked() {
+        let (mut a, _) = with_catalog();
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "id");
+        alt(&mut a, 'n');
+        alt(&mut a, 'z');
+        assert!(a.state.card.is_none());
+        assert!(a
+            .state
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("Peck a table, view or function")));
+    }
+
+    #[test]
+    fn a_card_cannot_be_read_while_a_statement_runs_and_says_so() {
+        let (mut a, _) = with_catalog();
+        type_into(&mut a, "select pg_sleep(5)");
+        press_run(&mut a);
         ctrl(&mut a, 'p');
         type_text(&mut a, "public.orders");
-        alt(&mut a, 'z');
-        assert!(a.state.diagram.is_some());
+        let commands = send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        assert!(describes(&commands).is_empty());
+        let card = a.state.card.as_ref().expect("the card");
+        assert!(matches!(&card.current().load,
+            crate::card::Load::Failed(m) if m.contains("statement is running")));
+    }
+
+    #[test]
+    fn s_on_a_table_card_runs_a_sample_and_closes_the_card() {
+        let (mut a, conn) = with_catalog();
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "public.orders");
+        send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        a.update(Event::Background(Background::Described {
+            conn,
+            target: crate::describe::Target::relation("public", "orders"),
+            result: Ok(orders_detail()),
+        }));
+        let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(a.state.card.is_none());
+        assert_eq!(a.state.focus, Pane::Editor);
+        assert_eq!(
+            a.state.editor().text(),
+            "SELECT * FROM public.orders LIMIT 100;"
+        );
+        assert!(commands.iter().any(
+            |c| matches!(c, Command::Run { sql, .. } if sql == "SELECT * FROM public.orders LIMIT 100")
+        ));
+    }
+
+    #[test]
+    fn running_a_query_replaces_the_card_with_its_results() {
+        let (mut a, _) = with_catalog();
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "public.orders");
+        send(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        assert!(a.state.card.is_some());
         send(&mut a, KeyCode::Char('2'), KeyModifiers::ALT);
         type_into(&mut a, "select 1");
         let Command::Run { conn, doc, .. } = press_run(&mut a)[0].clone() else {
@@ -4916,22 +5164,17 @@ mod tests {
             doc,
             output: output(vec![rows_set(&[&[Some("1"), None]])], None),
         }));
-        assert!(a.state.diagram.is_none());
+        assert!(a.state.card.is_none());
     }
 
     fn peck_app() -> (App, ConnId) {
-        let mut a = app();
-        let conn = connected(&mut a);
-        a.update(Event::Background(Background::Catalog {
-            conn,
-            result: Ok(sample_catalog()),
-        }));
+        let (mut a, conn) = with_catalog();
         send(&mut a, KeyCode::Char('5'), KeyModifiers::ALT);
         (a, conn)
     }
 
     #[test]
-    fn alt_5_focuses_the_peck_line_and_typing_matches_tables() {
+    fn alt_5_focuses_the_peck_line_and_typing_matches_objects() {
         let (mut a, _) = peck_app();
         assert_eq!(a.state.focus, Pane::Peck);
         type_into(&mut a, "peck ord");
@@ -4947,19 +5190,42 @@ mod tests {
     }
 
     #[test]
-    fn enter_in_the_peck_line_draws_the_selected_table_and_down_changes_the_choice() {
+    fn enter_in_the_peck_line_pecks_the_selected_object_and_remembers_it() {
         let (mut a, _) = peck_app();
         type_into(&mut a, "orders");
         send(&mut a, KeyCode::Down, KeyModifiers::NONE);
         let second = a.peck_matches()[a.state.peck.selected].path();
-        send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
-        let view = a.state.diagram.as_ref().expect("the diagram");
-        assert_eq!(format!("{}.{}", view.current().0, view.current().1), second);
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let targets = describes(&commands);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(format!("{}.{}", targets[0].schema, targets[0].name), second);
         assert_eq!(a.state.focus, Pane::Results);
+        assert_eq!(a.state.peck.recent, targets);
         // Alt+5 goes back to the line, where the text is still there.
         send(&mut a, KeyCode::Char('5'), KeyModifiers::ALT);
         assert_eq!(a.state.focus, Pane::Peck);
         assert_eq!(a.state.peck.input, "orders");
+    }
+
+    #[test]
+    fn with_nothing_typed_enter_pecks_the_chosen_recent_object() {
+        let (mut a, _) = peck_app();
+        for name in ["public.orders", "archive.orders"] {
+            send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+            type_into(&mut a, name);
+            send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+            send(&mut a, KeyCode::Char('5'), KeyModifiers::ALT);
+        }
+        // Newest first.
+        let recent: Vec<String> = a.state.peck.recent.iter().map(|t| t.label()).collect();
+        assert_eq!(recent, ["archive.orders", "public.orders"]);
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        send(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        let commands = send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(describes(&commands)[0].label(), "public.orders");
+        // Pecking it again moves it to the front without a duplicate.
+        assert_eq!(a.state.peck.recent.len(), 2);
+        assert_eq!(a.state.peck.recent[0].label(), "public.orders");
     }
 
     #[test]
@@ -4980,7 +5246,7 @@ mod tests {
             .message
             .as_deref()
             .is_some_and(|m| m.contains("not built yet")));
-        assert!(a.state.diagram.is_none());
+        assert!(a.state.card.is_none());
         send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
         type_into(&mut a, "zzz");
         send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
@@ -4989,7 +5255,7 @@ mod tests {
             .peck
             .message
             .as_deref()
-            .is_some_and(|m| m.contains("No table or view matches")));
+            .is_some_and(|m| m.contains("matches")));
         // Typing again clears the message.
         type_into(&mut a, "q");
         assert!(a.state.peck.message.is_none());
@@ -5020,48 +5286,6 @@ mod tests {
             .message
             .as_deref()
             .is_some_and(|m| m.contains("Reading the schema")));
-    }
-
-    #[test]
-    fn alt_z_on_something_that_is_not_a_table_says_so() {
-        let mut a = app();
-        let conn = connected(&mut a);
-        a.update(Event::Background(Background::Catalog {
-            conn,
-            result: Ok(sample_catalog()),
-        }));
-        ctrl(&mut a, 'p');
-        type_text(&mut a, "refresh");
-        alt(&mut a, 'z');
-        assert!(matches!(a.state.dialog, Some(Dialog::Find(_))));
-        assert!(a
-            .state
-            .notice
-            .as_deref()
-            .is_some_and(|n| n.contains("table or view")));
-    }
-
-    #[test]
-    fn s_runs_a_sample_of_the_selected_table() {
-        let mut a = app();
-        let conn = connected(&mut a);
-        a.update(Event::Background(Background::Catalog {
-            conn,
-            result: Ok(sample_catalog()),
-        }));
-        ctrl(&mut a, 'p');
-        type_text(&mut a, "public.orders");
-        alt(&mut a, 'z');
-        let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::NONE);
-        assert!(a.state.diagram.is_none());
-        assert_eq!(a.state.focus, Pane::Editor);
-        assert_eq!(
-            a.state.editor().text(),
-            "SELECT * FROM public.items LIMIT 100;"
-        );
-        assert!(commands.iter().any(
-            |c| matches!(c, Command::Run { sql, .. } if sql == "SELECT * FROM public.items LIMIT 100")
-        ));
     }
 
     #[test]

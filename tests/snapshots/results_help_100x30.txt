@@ -15,14 +15,14 @@
 │            │  ]                 next result           results.next_tab              │            │
 │            │  c                 connect               connection.open               │            │
 │            │  e                 edit                  focus.editor                  │            │
-│            │  q                 quit                  app.quit                      │            │
-│            │  r                 run                   query.run_statement           │            │
-│No results y│                                                                        │            │
-└────────────│global keys                                                             │────────────┘
-┌ Editor ────│  Alt+1             focus context         focus.context                 │────────────┐
-│1           │  Alt+2             edit                  focus.editor                  │name        │
-│            │  Alt+3             focus results         focus.results                 │ foreign key│
-│            │  Alt+4             focus session         focus.session                 │aves.       │
+│            │  q                 quit                  app.quit                      │────────────┘
+│            │  r                 run                   query.run_statement           │────────────┐
+│No results y│                                                                        │ew or functi│
+└────────────│global keys                                                             │            │
+┌ Editor ────│  Alt+1             focus context         focus.context                 │            │
+│1           │  Alt+2             edit                  focus.editor                  │            │
+│            │  Alt+3             focus results         focus.results                 │            │
+│            │  Alt+4             focus session         focus.session                 │            │
 │            │  Alt+5             focus peck            focus.peck                    │            │
 │            │  Alt+H             history               history.open                  │            │
 └────────────└─────────────────── Up/Down scroll  ? close  (1/30) ────────────────────┘────────────┘

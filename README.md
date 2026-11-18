@@ -22,9 +22,9 @@ name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refu
   past the edge of the loaded rows, or press `Home` or `End`, and pgpeck reads that part of the
   result from the server.
 - **Go back** to what you ran. `Alt+H` lists your statements, newest first, and searches them.
-- **Follow foreign keys.** Type `peck orders` in the Peck pane, or press `Alt+Z` on a table in the Find
-  window, to see a diagram of what the table points to and what points to it. You can walk from
-  table to table.
+- **Peck an object.** Type `peck orders` in the Peck pane, or press `Alt+Z` on an object in the Find
+  window, to see a card with a table's columns, indexes, tablespace and the tables it points at,
+  a view's query, or a function's arguments and source.
 - **Find** tables, views, columns, functions, types and schemas by name with `Ctrl+P`.
 - **Stay safe.** Risky statements wait for a typed `y` or `yes`. The session strip and the status
   bar flag open and failed transactions.
@@ -56,11 +56,11 @@ name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refu
 
 - **Session** (top left): the connection's name, where it points (host, user, database) and TLS.
   Production, open transactions and failures are flagged here.
-- **Results** above the **Editor**, in the left column. A relationship diagram takes the place of
-  the results while it is open.
-- **Context**, **Trends** and **Peck** in the right column. The Peck pane is level with the editor.
-  The logo sits above Context on tall terminals. Trends needs about 9 rows, and 13 to show all of
-  its numbers and the five largest tables.
+- **Results** above the **Editor**, in the left column. The card of a pecked object takes the place
+  of the results while it is open.
+- **Context**, **Trends** and **Peck** in the right column. Trends take their natural height (up
+  to 13 rows, or 9 on a short terminal) and the Peck pane takes the rest. The logo sits above
+  Context on tall terminals.
 
 Copied text also goes to your system clipboard, through the terminal (OSC 52). Most modern
 terminals allow this. If yours does not, check its clipboard setting, or paste with the terminal's
@@ -125,15 +125,16 @@ Remove the container with `docker rm -f pgpeck-pg`.
 | | `Alt+T` `V` `M` `O` `F` `Y` `N` | show only tables, views, materialized views, foreign tables, functions, types or schemas. Press again to show all |
 | | `Alt+C` | on a table or view: list only its columns |
 | | `Alt+S` | on a table or view: add `SELECT * ... LIMIT 100` and run it |
-| | `Alt+Z` | on a table or view: draw its relationships |
-| Peck pane (`Alt+5`) | `Enter` | draw the selected table |
-| | `Up` `Down` | choose among the matching tables |
+| | `Alt+Z` | peck the selected table, view or function |
+| Peck pane (`Alt+5`) | `Enter` | show the card of the selected object |
+| | `Up` `Down` | choose among the matching (or recent) objects |
 | | `Esc` | back to the context pane |
-| Relationship diagram | `Enter` | show the table on the other end of the selected key |
-| | `Backspace` | back to the table you came from |
-| | `S` | select sample rows of the selected table |
-| | `Esc` | close |
-| | `Esc` | close, changing nothing |
+| Card | `Up` `Down` | choose a reference, or scroll |
+| | `PageUp` `PageDown` `Home` `End` | scroll |
+| | `Enter` | peck the table the selected reference points at |
+| | `Backspace` | back to the previous object |
+| | `S` | select sample rows of a table or view |
+| | `Esc` | close the card |
 | Connect window | `Ctrl+E` | edit the selected saved connection |
 | | `Ctrl+S` | save the typed address as a profile (no password) |
 
@@ -148,29 +149,35 @@ Before a risky statement runs, pgpeck shows it with the connection name and wait
 
 The session strip and the status bar show an open or failed transaction.
 
-## Peck: relationships
+## Peck: look at an object
 
-Peck draws the foreign keys around a table. The **Peck** pane is in the right column, under the
-trends and level with the editor. Press `Alt+5` (or `Tab` until it has focus), type a table or
-view name, and press `Enter`. The word `peck` in front is optional, so `peck orders` and `orders`
-do the same. While you type, the pane lists the tables and views that match. `Up` and `Down`
-choose one. `Esc` leaves the pane.
+Peck shows what a table, view or function is made of. The **Peck** pane is in the right column,
+under the trends, and takes the rest of the column's height. Press `Alt+5` (or `Tab` until it has
+focus), type a name, and press `Enter`. The word `peck` in front is optional, so `peck orders` and
+`orders` do the same. While you type, the pane lists the tables, views and functions that match.
+`Up` and `Down` choose one. With nothing typed it lists the objects you pecked before. `Esc`
+leaves the pane. In the Find window, `Alt+Z` pecks the selected object.
 
-The diagram takes the place of the results. The table sits in the middle. The tables that point
-at it are on the left, and the tables it points at are on the right. Lines join the boxes, with
-an arrow from the table that holds the foreign key to the table it refers to. Each box names the
-columns of the key, holder first, for example `(order_id) → (id)`. A line under the diagram spells
-out the selected key.
+The object's **card** takes the place of the results:
 
-In the diagram, `Up` and `Down` move the selection through the right side first, then the left.
-`Enter` makes the selected table the middle one, so you can walk through the schema, and
-`Backspace` goes back. `S` selects sample rows of the selected table. `Esc` closes the diagram and
-brings the results back. Running a statement closes it too. When a table has more neighbours than
-fit, the diagram scrolls and says how many are out of view.
+- **A table** shows its owner, tablespace, estimated rows and size (with a bar that splits the
+  data from the indexes), its comment, then its **columns** (primary and foreign key marks, type,
+  `NOT NULL`, default, identity or generated), its **indexes** (kind, method, columns, partial
+  condition, size bar, tablespace, `INVALID` when broken), and its **references**: the tables its
+  foreign keys point at, with the columns and the `on delete` rule.
+- **A view** shows its columns and its query. A materialized view also shows its size, indexes
+  and whether it holds data.
+- **A function** shows its language, owner, behaviour (volatile, stable or immutable, strict,
+  definer or caller), its arguments, what it returns and its source.
 
-`Alt+Z` on a table in the Find window opens the same diagram. `peck schema` and `peck function`
-are planned and say "not built yet". The keys come from the schema read when you connect. They
-refresh after a statement that changes the schema.
+On a card, `Up` and `Down` choose among the references (or scroll when there are none), and
+`PageUp`, `PageDown`, `Home` and `End` scroll. `Enter` pecks the table the selected reference
+points at, so you can walk through the schema. `Backspace` goes back. `S` selects sample rows of
+a table or view. `Esc` closes the card and brings the results back, and so does running a
+statement. A card is read when you ask for it, so it needs a quiet connection: while a statement
+runs, or after a transaction fails, it says so instead.
+
+`peck schema` is planned and says "not built yet".
 
 ## History
 

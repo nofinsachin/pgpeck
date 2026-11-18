@@ -614,50 +614,141 @@ async fn small_results_and_other_statements_are_not_paged() {
 }
 
 #[tokio::test]
-async fn foreign_keys_are_read_with_their_columns_in_both_directions() {
+async fn a_table_view_and_function_are_described_from_the_server() {
+    use pgpeck::catalog::Kind;
+    use pgpeck::describe::{Detail, Target};
     let url = database!();
     let (session, _) = connect(&url).await;
     let out = db::run(
         &session,
-        "drop schema if exists pgpeck_fk_test cascade;
-         create schema pgpeck_fk_test;
-         create table pgpeck_fk_test.parent (a int, b int, primary key (a, b));
-         create table pgpeck_fk_test.child (
-             id int primary key, pa int, pb int,
+        "drop schema if exists pgpeck_card_test cascade;
+         create schema pgpeck_card_test;
+         create table pgpeck_card_test.parent (a int, b int, primary key (a, b));
+         create table pgpeck_card_test.child (
+             id bigint generated always as identity primary key,
+             pa int not null, pb int not null,
+             note text default 'none',
+             double_id bigint generated always as (id * 2) stored,
              constraint child_parent_fk foreign key (pa, pb)
-                 references pgpeck_fk_test.parent (a, b));
-         create table pgpeck_fk_test.selfref (
-             id int primary key, up int references pgpeck_fk_test.selfref (id))",
+                 references pgpeck_card_test.parent (a, b) on delete cascade);
+         create unique index child_pa_idx on pgpeck_card_test.child (pa, pb) where note is not null;
+         comment on table pgpeck_card_test.child is 'Children of parents';
+         create view pgpeck_card_test.child_notes as select id, note from pgpeck_card_test.child;
+         create function pgpeck_card_test.add_one(n integer, label text default 'x')
+             returns integer language sql immutable strict as 'select n + 1';",
         10,
         &Default::default(),
     )
     .await;
     assert!(out.error.is_none(), "{:?}", out.error);
-    let catalog = db::catalog(&session).await.expect("catalog");
 
-    let from_child = catalog.references_from("pgpeck_fk_test", "child");
-    assert_eq!(from_child.len(), 1);
-    let key = from_child[0];
-    assert_eq!(key.name, "child_parent_fk");
-    assert_eq!(key.columns, ["pa", "pb"]);
+    let target = |kind, name: &str, args: &str| Target {
+        kind,
+        schema: "pgpeck_card_test".to_string(),
+        name: name.to_string(),
+        args: args.to_string(),
+    };
+
+    // A table: columns in order with keys and defaults, indexes, one reference.
+    let Detail::Relation(child) = db::describe(&session, &target(Kind::Table, "child", ""))
+        .await
+        .expect("child")
+    else {
+        panic!("a table");
+    };
+    assert_eq!((child.kind, child.is_view), ("table", false));
+    assert_eq!(child.comment.as_deref(), Some("Children of parents"));
+    assert!(child.tablespace.is_none(), "the default tablespace");
+    let names: Vec<&str> = child.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["id", "pa", "pb", "note", "double_id"]);
+    assert!(child.columns[0].primary_key && child.columns[0].generated == Some("always"));
+    assert!(child.columns[1].foreign_key && child.columns[1].not_null);
+    assert_eq!(child.columns[3].default.as_deref(), Some("'none'::text"));
+    assert_eq!(child.columns[4].generated, Some("stored"));
+    let index_names: Vec<&str> = child.indexes.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(index_names, ["child_pkey", "child_pa_idx"]);
+    assert!(child.indexes[0].primary);
+    let partial = &child.indexes[1];
+    assert!(partial.unique && partial.valid);
+    assert_eq!(partial.columns, ["pa", "pb"]);
+    assert!(partial
+        .predicate
+        .as_deref()
+        .is_some_and(|p| p.contains("note")));
+    assert_eq!(child.references.len(), 1);
+    let reference = &child.references[0];
+    assert_eq!(reference.name, "child_parent_fk");
     assert_eq!(
-        (key.ref_schema.as_str(), key.ref_table.as_str()),
-        ("pgpeck_fk_test", "parent")
+        (reference.ref_schema.as_str(), reference.ref_table.as_str()),
+        ("pgpeck_card_test", "parent")
     );
-    assert_eq!(key.ref_columns, ["a", "b"]);
-    let to_parent = catalog.referenced_by("pgpeck_fk_test", "parent");
-    assert_eq!(to_parent.len(), 1);
-    assert_eq!(to_parent[0].table, "child");
-    // A table that points at itself is both ends of its own key.
     assert_eq!(
-        catalog.references_from("pgpeck_fk_test", "selfref").len(),
-        1
+        (reference.columns.clone(), reference.ref_columns.clone()),
+        (
+            vec!["pa".to_string(), "pb".to_string()],
+            vec!["a".to_string(), "b".to_string()]
+        )
     );
-    assert_eq!(catalog.referenced_by("pgpeck_fk_test", "selfref").len(), 1);
+    assert_eq!(reference.on_delete, "cascade");
+    assert!(child.total_bytes.is_some() && child.index_bytes.is_some());
+
+    // The table it points at has an index for its composite key and no references.
+    let Detail::Relation(parent) = db::describe(&session, &target(Kind::Table, "parent", ""))
+        .await
+        .expect("parent")
+    else {
+        panic!("a table");
+    };
+    assert!(parent.references.is_empty());
+    assert_eq!(parent.indexes[0].columns, ["a", "b"]);
+
+    // A view: its query, no size, no references.
+    let Detail::Relation(view) = db::describe(&session, &target(Kind::View, "child_notes", ""))
+        .await
+        .expect("view")
+    else {
+        panic!("a view");
+    };
+    assert_eq!((view.kind, view.is_view), ("view", true));
+    assert_eq!(view.columns.len(), 2);
+    assert!(view
+        .definition
+        .as_deref()
+        .is_some_and(|d| d.contains("child")));
+    assert!(view.total_bytes.is_none() && view.references.is_empty());
+
+    // A function, found by its identity arguments among overloads.
+    let Detail::Function(function) = db::describe(
+        &session,
+        &target(Kind::Function, "add_one", "n integer, label text"),
+    )
+    .await
+    .expect("function") else {
+        panic!("a function");
+    };
+    assert_eq!(
+        (
+            function.kind,
+            function.language.as_str(),
+            function.volatility
+        ),
+        ("function", "sql", "immutable")
+    );
+    assert!(function.strict && !function.security_definer);
+    assert_eq!(
+        function.arguments,
+        "n integer, label text DEFAULT 'x'::text"
+    );
+    assert_eq!(function.returns, "integer");
+    assert_eq!(function.source.as_deref(), Some("select n + 1"));
+
+    // Something that is not there is an error, not an empty card.
+    let missing = db::describe(&session, &target(Kind::Table, "nothing_here", "")).await;
+    assert!(missing.is_err_and(|e| e.message.contains("no longer exists")));
 
     let out = db::run(
         &session,
-        "drop schema pgpeck_fk_test cascade",
+        "drop schema pgpeck_card_test cascade",
         10,
         &Default::default(),
     )

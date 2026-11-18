@@ -22,10 +22,8 @@ const SIDE_MAX_WIDTH: u16 = 50;
 const CONTEXT_HEIGHT: u16 = 5;
 const TRENDS_MIN_HEIGHT: u16 = 9;
 const TRENDS_FULL_HEIGHT: u16 = 13;
-/// The peck command line sits under the trends, level with the editor. It is
-/// never shorter than this, and never taller than `PECK_MAX_HEIGHT`.
+/// The peck pane takes the column's remaining height, but never less than this.
 const PECK_MIN_HEIGHT: u16 = 6;
-const PECK_MAX_HEIGHT: u16 = 10;
 /// The logo above the context pane, shown when the column has room for it
 /// on top of everything else.
 pub const LOGO_HEIGHT: u16 = 7;
@@ -52,7 +50,7 @@ pub struct Areas {
     pub logo: Option<Rect>,
     /// Largest tables. Left out when the right column is too short.
     pub trends: Option<Rect>,
-    /// The peck command line, level with the editor.
+    /// The peck pane, under the trends, taking the rest of the column.
     pub peck: Option<Rect>,
     pub results: Option<Rect>,
     pub hint: Rect,
@@ -137,40 +135,42 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     }
 
     if let Some(side) = side {
-        // The peck line takes the bottom of the column, level with the editor.
-        let editor_rows = areas.editor.map_or(PECK_MIN_HEIGHT, |e| e.height);
-        let peck_height = editor_rows.clamp(PECK_MIN_HEIGHT, PECK_MAX_HEIGHT);
-        let with_peck = side.height >= CONTEXT_HEIGHT + peck_height;
-        let (top, peck) = if with_peck {
-            let [top, peck] =
-                Split::vertical([Constraint::Min(0), Constraint::Length(peck_height)]).areas(side);
-            (top, Some(peck))
+        // From the top: the logo when there is room, the context, the trends
+        // at their natural height, and the peck pane in all the rest.
+        let with_peck = side.height >= CONTEXT_HEIGHT + PECK_MIN_HEIGHT;
+        let after_context = side.height.saturating_sub(CONTEXT_HEIGHT + PECK_MIN_HEIGHT);
+        let with_trends = state.show_trends && with_peck && after_context >= TRENDS_MIN_HEIGHT;
+        let trends_height = if with_trends {
+            after_context.min(TRENDS_FULL_HEIGHT)
         } else {
-            (side, None)
+            0
         };
-        areas.peck = peck;
-
-        let with_trends = state.show_trends && top.height >= CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT;
-        // The logo needs the trends to have all their rows as well.
-        let needed = CONTEXT_HEIGHT + if with_trends { TRENDS_FULL_HEIGHT } else { 0 };
-        let top = if top.height >= LOGO_HEIGHT + needed {
-            let [logo, rest] =
-                Split::vertical([Constraint::Length(LOGO_HEIGHT), Constraint::Min(0)]).areas(top);
-            areas.logo = Some(logo);
-            rest
-        } else {
-            top
-        };
-        if with_trends {
-            let [context, trends] = Split::vertical([
+        // The logo waits until the trends have all their rows.
+        let with_logo = with_peck
+            && side.height
+                >= LOGO_HEIGHT
+                    + CONTEXT_HEIGHT
+                    + PECK_MIN_HEIGHT
+                    + if state.show_trends {
+                        TRENDS_FULL_HEIGHT
+                    } else {
+                        0
+                    };
+        let logo_height = if with_logo { LOGO_HEIGHT } else { 0 };
+        if with_peck {
+            let [logo, context, trends, peck] = Split::vertical([
+                Constraint::Length(logo_height),
                 Constraint::Length(CONTEXT_HEIGHT),
-                Constraint::Min(TRENDS_MIN_HEIGHT),
+                Constraint::Length(trends_height),
+                Constraint::Min(PECK_MIN_HEIGHT),
             ])
-            .areas(top);
+            .areas(side);
+            areas.logo = with_logo.then_some(logo);
             areas.context = Some(context);
-            areas.trends = Some(trends);
+            areas.trends = with_trends.then_some(trends);
+            areas.peck = Some(peck);
         } else {
-            areas.context = Some(top);
+            areas.context = Some(side);
         }
     }
     areas

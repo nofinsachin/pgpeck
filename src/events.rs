@@ -58,6 +58,12 @@ pub enum Background {
         start: u64,
         result: Result<Vec<Vec<Option<String>>>, DbError>,
     },
+    /// What the server says about a pecked object.
+    Described {
+        conn: ConnId,
+        target: crate::describe::Target,
+        result: Result<crate::describe::Detail, DbError>,
+    },
     Stats {
         conn: ConnId,
         result: Result<SessionStats, DbError>,

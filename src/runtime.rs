@@ -115,6 +115,19 @@ impl Runtime {
                     });
                 });
             }
+            Command::Describe { conn, target } => {
+                tokio::spawn(async move {
+                    let result = match this.session(conn) {
+                        Some(session) => db::describe(&session, &target).await,
+                        None => Err(db::DbError::new("the connection is closed")),
+                    };
+                    this.send(Background::Described {
+                        conn,
+                        target,
+                        result,
+                    });
+                });
+            }
             Command::Stats { conn } => {
                 tokio::spawn(async move {
                     let result = match this.session(conn) {

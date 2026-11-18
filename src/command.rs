@@ -37,6 +37,11 @@ pub enum Command {
     Stats {
         conn: ConnId,
     },
+    /// Read the facts about a table, view or function, to show its card.
+    Describe {
+        conn: ConnId,
+        target: crate::describe::Target,
+    },
     /// Read the schema metadata for the find overlay.
     Catalog {
         conn: ConnId,

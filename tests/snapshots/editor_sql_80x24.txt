@@ -15,9 +15,9 @@
 │No results yet. Run with Ctrl+R.          ││                                  │
 └──────────────────────────────────────────┘└──────────────────────────────────┘
 ┌ ▶ Editor ────────────────────────────────┐┌ Peck ────────────────────────────┐
-│1 -- users per day                        ││peck> a table or view name        │
-│2 SELECT id, name                         ││peck orders  draws its foreign key│
-│3   FROM users                            ││Enter draws it. Esc leaves.       │
+│1 -- users per day                        ││peck> peck a table, view or functi│
+│2 SELECT id, name                         ││Enter shows its card              │
+│3   FROM users                            ││                                  │
 │4    WHERE name = 'a;b' AND n > 10;       ││                                  │
 └──────────────────────────────────────────┘└──────────────────────────────────┘
 Ctrl+R run  Esc commands  Ctrl+O connect

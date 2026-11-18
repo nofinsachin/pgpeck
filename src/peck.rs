@@ -1,5 +1,5 @@
-//! The peck command line: `peck orders` draws the foreign keys around a table.
-//! More commands will follow, so the grammar lives here. Pure logic.
+//! The peck command line: `peck orders` shows the card of a table, view or
+//! function. More commands will follow, so the grammar lives here. Pure logic.
 
 use crate::catalog::{Catalog, Object};
 use crate::fuzzy;
@@ -11,14 +11,14 @@ pub const SUGGESTIONS: usize = 5;
 pub enum Command<'a> {
     /// Nothing typed yet.
     Empty,
-    /// Draw this table or view, as `name` or `schema.name`.
-    Table(&'a str),
+    /// Show this table, view or function, as `name` or `schema.name`.
+    Object(&'a str),
     /// A command that is planned but not built, such as `schema`.
     NotBuilt(&'static str),
 }
 
 /// Commands that are planned and answer "not built yet" for now.
-const PLANNED: [&str; 2] = ["schema", "function"];
+const PLANNED: [&str; 1] = ["schema"];
 
 /// Reads what was typed. The word `peck` in front is optional.
 pub fn parse(input: &str) -> Command<'_> {
@@ -39,10 +39,10 @@ pub fn parse(input: &str) -> Command<'_> {
             return Command::NotBuilt(word);
         }
     }
-    Command::Table(text)
+    Command::Object(text)
 }
 
-/// Tables and views that match `query`, best first.
+/// Tables, views and functions that match `query`, best first.
 pub fn suggestions<'a>(catalog: &'a Catalog, query: &str) -> Vec<&'a Object> {
     let query = query.trim();
     if query.is_empty() {
@@ -51,7 +51,7 @@ pub fn suggestions<'a>(catalog: &'a Catalog, query: &str) -> Vec<&'a Object> {
     let mut found: Vec<(i64, &Object)> = catalog
         .objects
         .iter()
-        .filter(|o| o.kind.is_relation())
+        .filter(|o| o.kind.is_relation() || o.kind == crate::catalog::Kind::Function)
         .filter_map(|o| {
             let score = [o.path(), o.name.clone()]
                 .iter()
@@ -89,26 +89,34 @@ mod tests {
         assert_eq!(parse("   "), Command::Empty);
         assert_eq!(parse("peck"), Command::Empty);
         assert_eq!(parse("PECK  "), Command::Empty);
-        assert_eq!(parse("peck orders"), Command::Table("orders"));
+        assert_eq!(parse("peck orders"), Command::Object("orders"));
         assert_eq!(
             parse("  peck   public.orders "),
-            Command::Table("public.orders")
+            Command::Object("public.orders")
         );
-        assert_eq!(parse("orders"), Command::Table("orders"));
+        assert_eq!(parse("orders"), Command::Object("orders"));
         // A table whose name starts with the letters is still a table.
-        assert_eq!(parse("pecker"), Command::Table("pecker"));
+        assert_eq!(parse("pecker"), Command::Object("pecker"));
     }
 
     #[test]
     fn planned_commands_say_so_and_a_table_of_that_name_needs_its_schema() {
         assert_eq!(parse("peck schema"), Command::NotBuilt("schema"));
         assert_eq!(parse("peck schema sales"), Command::NotBuilt("schema"));
-        assert_eq!(parse("FUNCTION refresh"), Command::NotBuilt("function"));
-        assert_eq!(parse("peck public.schema"), Command::Table("public.schema"));
+        // Functions are objects like tables: peck them by name.
+        assert_eq!(parse("peck function"), Command::Object("function"));
+        assert_eq!(
+            parse("peck refresh_orders"),
+            Command::Object("refresh_orders")
+        );
+        assert_eq!(
+            parse("peck public.schema"),
+            Command::Object("public.schema")
+        );
     }
 
     #[test]
-    fn suggestions_are_tables_and_views_only_best_match_first_and_capped() {
+    fn suggestions_are_tables_views_and_functions_best_match_first_and_capped() {
         let catalog = Catalog {
             objects: vec![
                 object(Kind::Table, "public", "orders"),
@@ -118,20 +126,20 @@ mod tests {
                 object(Kind::Function, "public", "orders_refresh"),
                 object(Kind::Table, "public", "customers"),
             ],
-            foreign_keys: Vec::new(),
         };
         let found = suggestions(&catalog, "orders");
         let paths: Vec<String> = found.iter().map(|o| o.path()).collect();
-        assert_eq!(paths.len(), 3, "{paths:?}");
+        // Columns are not objects to peck. Functions are.
+        assert_eq!(paths.len(), 4, "{paths:?}");
         assert!(paths.contains(&"public.orders".to_string()));
-        assert!(found.iter().all(|o| o.kind.is_relation()));
+        assert!(paths.contains(&"public.orders_refresh".to_string()));
+        assert!(found.iter().all(|o| o.kind != Kind::Column));
         assert!(suggestions(&catalog, "").is_empty());
         assert!(suggestions(&catalog, "zzz").is_empty());
         let many = Catalog {
             objects: (0..20)
                 .map(|n| object(Kind::Table, "s", &format!("t{n}")))
                 .collect(),
-            foreign_keys: Vec::new(),
         };
         assert_eq!(suggestions(&many, "t").len(), SUGGESTIONS);
     }

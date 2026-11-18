@@ -73,9 +73,9 @@ pub enum Action {
     FindJump(Kind),
     /// On a table or view: list only its columns. Again: back to everything.
     FindColumns,
-    FindRelations,
-    /// In the relationship view: select sample rows of the selected table.
-    RelationSample,
+    FindPeck,
+    /// On a pecked table or view: select sample rows of it.
+    CardSample,
     SessionEditDatabase,
     SessionEditUser,
     TransactionRollback,
@@ -150,8 +150,8 @@ const ACTIONS: &[(&str, Action)] = &[
     ("find.jump_function", Action::FindJump(Kind::Function)),
     ("find.jump_type", Action::FindJump(Kind::Type)),
     ("find.jump_schema", Action::FindJump(Kind::Schema)),
-    ("find.open_relationships", Action::FindRelations),
-    ("relations.sample", Action::RelationSample),
+    ("find.peck", Action::FindPeck),
+    ("card.sample", Action::CardSample),
     ("session.edit_database", Action::SessionEditDatabase),
     ("session.edit_user", Action::SessionEditUser),
     ("transaction.rollback", Action::TransactionRollback),
@@ -353,8 +353,8 @@ impl Action {
                 Kind::Schema => "jump to schemas",
             },
             Action::FindColumns => "columns of this table",
-            Action::FindRelations => "relationships",
-            Action::RelationSample => "select sample rows",
+            Action::FindPeck => "peck",
+            Action::CardSample => "select sample rows",
             Action::SessionEditDatabase => "change database",
             Action::SessionEditUser => "change user",
             Action::TransactionRollback => "roll back",
@@ -384,8 +384,8 @@ pub enum Scope {
     Picker,
     /// The find overlay.
     Find,
-    /// The relationship view.
-    Relations,
+    /// The card of a pecked object, shown in place of the results.
+    Card,
     /// The peck command line.
     Peck,
     /// The form for entering connection details.
@@ -406,7 +406,7 @@ impl Scope {
             Scope::Completion => "completion",
             Scope::Picker => "picker",
             Scope::Find => "find",
-            Scope::Relations => "relations",
+            Scope::Card => "card",
             Scope::Peck => "peck",
             Scope::Form => "form",
             Scope::Prompt => "prompt",
@@ -424,7 +424,7 @@ impl Scope {
             Scope::Completion,
             Scope::Picker,
             Scope::Find,
-            Scope::Relations,
+            Scope::Card,
             Scope::Peck,
             Scope::Form,
             Scope::Prompt,
@@ -833,7 +833,7 @@ mod tests {
             Scope::Completion,
             Scope::Picker,
             Scope::Find,
-            Scope::Relations,
+            Scope::Card,
             Scope::Peck,
             Scope::Form,
             Scope::Prompt,

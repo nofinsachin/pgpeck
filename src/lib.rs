@@ -4,14 +4,15 @@
 //! integration tests use the same code.
 
 pub mod app;
+pub mod card;
 pub mod catalog;
 pub mod clipboard;
 pub mod command;
 pub mod complete;
 pub mod config;
 pub mod db;
+pub mod describe;
 pub mod diag;
-pub mod diagram;
 pub mod editor;
 pub mod events;
 pub mod form;
@@ -24,7 +25,6 @@ pub mod paths;
 pub mod peck;
 pub mod picker;
 pub mod profile;
-pub mod relations;
 pub mod results;
 pub mod runtime;
 pub mod secrets;

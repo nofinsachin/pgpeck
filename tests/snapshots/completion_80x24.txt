@@ -15,9 +15,9 @@
 │No┌────────────┐Run with Ctrl+R.          ││                                  │
 └──│  desc    kw│──────────────────────────┘└──────────────────────────────────┘
 ┌ ▶│▶ delete  kw│──────────────────────────┐┌ Peck ────────────────────────────┐
-│1 │  declare kw│                          ││peck> a table or view name        │
-│2 │  default kw│                          ││peck orders  draws its foreign key│
-│3 └────────────┘                          ││Enter draws it. Esc leaves.       │
+│1 │  declare kw│                          ││peck> peck a table, view or functi│
+│2 │  default kw│                          ││Enter shows its card              │
+│3 └────────────┘                          ││                                  │
 │4 de                                      ││                                  │
 └──────────────────────────────────────────┘└──────────────────────────────────┘
 Enter accept suggestion  Down next suggestion  Esc dismiss suggestions

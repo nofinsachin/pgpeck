@@ -7,15 +7,15 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, ConnStatus, Connection, Dialog, HelpLine, Pane};
+use crate::card::{self, Load, Tone};
 use crate::catalog;
 use crate::db::{DbError, ResultSet, SessionStats, TxState};
-use crate::diagram;
+use crate::describe;
 use crate::editor::{cell_width, display_col, Pos};
 use crate::history;
 use crate::keymap::{Action, KeyChord, Scope};
 use crate::layout;
 use crate::picker::{self, Item};
-use crate::relations;
 use crate::results::Tab;
 use crate::sql::{self, Token, TokenKind};
 use crate::theme::Theme;
@@ -67,8 +67,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         draw_session(frame, app, theme, rect, areas.hint.height == 0);
     }
     if let Some(rect) = areas.results {
-        match &app.state.diagram {
-            Some(view) => draw_diagram(frame, app, theme, view, rect),
+        match &app.state.card {
+            Some(card) => draw_card(frame, app, theme, card, rect),
             None => draw_results(frame, app, theme, rect),
         }
     }
@@ -586,7 +586,7 @@ impl<'a> SessionView<'a> {
     }
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
     let mut value = bytes as f64;
     let mut unit = 0;
@@ -602,7 +602,7 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// A span of time in its two largest units: `12s`, `5m`, `3h 20m`, `2d 4h`.
-fn format_age(secs: u64) -> String {
+pub(crate) fn format_age(secs: u64) -> String {
     match secs {
         0..=59 => format!("{secs}s"),
         60..=3599 => format!("{}m", secs / 60),
@@ -1467,7 +1467,7 @@ fn draw_peck(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let prompt = "peck> ";
     let mut first = vec![Span::styled(prompt, Style::new().fg(theme.label))];
     if peck.input.is_empty() {
-        first.push(Span::styled("a table or view name", dim));
+        first.push(Span::styled("peck a table, view or function", dim));
     } else {
         first.push(Span::styled(peck.input.clone(), value));
     }
@@ -1484,31 +1484,59 @@ fn draw_peck(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 
     let mut lines: Vec<Line> = Vec::new();
     let matches = app.peck_matches();
+    let width = usize::from(inner.width);
+    let item = |name: String, kind: &str, selected: bool| {
+        let mut line = Line::from(vec![
+            Span::styled(if selected { "▶ " } else { "  " }, value),
+            Span::styled(
+                fit(&name, width.saturating_sub(4 + kind.chars().count()).max(8)),
+                value,
+            ),
+            Span::raw("  "),
+            Span::styled(kind.to_string(), dim),
+        ]);
+        if selected && focused {
+            line = line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD));
+        }
+        line
+    };
     if let Some(message) = &peck.message {
         lines.push(Line::styled(message.clone(), Style::new().fg(theme.error)));
     } else if !matches.is_empty() {
         for (index, object) in matches.iter().enumerate() {
-            let selected = index == peck.selected;
-            let mut line = Line::from(vec![
-                Span::styled(if selected { "▶ " } else { "  " }, value),
-                Span::styled(object.path(), value),
-                Span::raw("  "),
-                Span::styled(object.kind.label(), dim),
-            ]);
-            if selected && focused {
-                line = line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD));
-            }
-            lines.push(line);
+            let name = if object.kind == crate::catalog::Kind::Function {
+                format!("{}({})", object.path(), object.detail)
+            } else {
+                object.path()
+            };
+            lines.push(item(name, object.kind.label(), index == peck.selected));
         }
     } else if peck.input.is_empty() {
-        lines.push(Line::styled("peck orders  draws its foreign keys", dim));
-        lines.push(Line::styled("Enter draws it. Esc leaves.", dim));
+        lines.push(Line::styled("Enter shows its card", dim));
+        if !peck.recent.is_empty() {
+            lines.push(Line::styled("Recent", Style::new().fg(theme.label)));
+        }
+        for (index, target) in peck.recent.iter().enumerate() {
+            lines.push(item(
+                target.label(),
+                target.kind.label(),
+                index == peck.selected,
+            ));
+        }
     } else if matches!(
         crate::peck::parse(&peck.input),
-        crate::peck::Command::Table(_)
+        crate::peck::Command::Object(_)
     ) {
-        lines.push(Line::styled("No table or view matches", dim));
+        lines.push(Line::styled("Nothing matches", dim));
     }
+    // Keep the selected line in view when the list is longer than the pane.
+    let room = usize::from(inner.height.saturating_sub(1));
+    let selected_line = lines
+        .iter()
+        .position(|l| l.spans.first().is_some_and(|s| s.content == "▶ "))
+        .unwrap_or(0);
+    let skip = (selected_line + 1).saturating_sub(room);
+    let lines: Vec<Line> = lines.into_iter().skip(skip).collect();
     frame.render_widget(
         Paragraph::new(lines),
         Rect {
@@ -1519,21 +1547,25 @@ fn draw_peck(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     );
 }
 
-/// The relationship diagram, drawn in place of the results.
-fn draw_diagram(frame: &mut Frame, app: &App, theme: &Theme, view: &relations::View, area: Rect) {
+/// The card of a pecked object, drawn in place of the results.
+fn draw_card(frame: &mut Frame, app: &App, theme: &Theme, card: &card::Card, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
-    let label = Style::new().fg(theme.label).add_modifier(Modifier::BOLD);
-    let value = Style::new().fg(theme.value);
-    let (schema, table) = view.current();
-    // Drawn in the results' place, so it takes the results' focus marks.
+    let entry = card.current();
+    let what = match &entry.load {
+        Load::Ready(describe::Detail::Relation(d)) => d.kind,
+        Load::Ready(describe::Detail::Function(d)) => d.kind,
+        _ if entry.target.is_function() => "function",
+        _ => "table or view",
+    };
     let focused = app.state.focus == Pane::Results;
+    let label = entry.target.label();
     let (title, border) = if focused {
         (
-            format!(" ▶ Relationships: {schema}.{table} "),
+            format!(" ▶ {label} · {what} "),
             Style::new().fg(theme.focus).add_modifier(Modifier::BOLD),
         )
     } else {
-        (format!(" Relationships: {schema}.{table} "), dim)
+        (format!(" {label} · {what} "), dim)
     };
     let block = Block::bordered()
         .title(title)
@@ -1541,150 +1573,134 @@ fn draw_diagram(frame: &mut Frame, app: &App, theme: &Theme, view: &relations::V
         .title_style(border);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    if inner.height < 4 {
+    if inner.height < 3 {
         return;
     }
-    // The tables followed so far, so the way back is clear.
-    let trail = view
-        .trail
-        .iter()
-        .map(|(s, t)| format!("{s}.{t}"))
-        .collect::<Vec<_>>()
-        .join(" › ");
-    frame.render_widget(
-        Paragraph::new(Line::styled(fit(&trail, usize::from(inner.width)), dim)),
-        Rect { height: 1, ..inner },
-    );
+    let width = usize::from(inner.width);
 
-    let canvas_area = Rect {
-        y: inner.y + 1,
-        height: inner.height.saturating_sub(3),
+    // The objects followed so far, so the way back is clear.
+    let mut top = 0u16;
+    if card.trail.len() > 1 {
+        let trail = card
+            .trail
+            .iter()
+            .map(|e| e.target.label())
+            .collect::<Vec<_>>()
+            .join(" › ");
+        frame.render_widget(
+            Paragraph::new(Line::styled(fit(&trail, width), dim)),
+            Rect { height: 1, ..inner },
+        );
+        top = 1;
+    }
+    let body = Rect {
+        y: inner.y + top,
+        height: inner.height - top - 1,
         ..inner
     };
-    let links = App::relation_links(&app.state.connections, app.state.doc().connection, view);
-    // Tables that point at this one on the left, the ones it points at on the
-    // right. Each box says which columns the key joins, holder first.
-    let node = |link: &relations::Link<'_>| {
-        let (other_schema, other_table) = link.other();
-        diagram::Node {
-            title: format!("{other_schema}.{other_table}"),
-            note: format!(
-                "({}) → ({})",
-                link.key.columns.join(", "),
-                link.key.ref_columns.join(", ")
-            ),
-        }
+    let footer = Rect {
+        y: inner.y + inner.height - 1,
+        height: 1,
+        ..inner
     };
-    let right: Vec<diagram::Node> = links.iter().filter(|l| l.outgoing).map(node).collect();
-    let left: Vec<diagram::Node> = links.iter().filter(|l| !l.outgoing).map(node).collect();
-    let selected = (!links.is_empty()).then(|| {
-        if view.selected < right.len() {
-            (diagram::Side::Right, view.selected)
-        } else {
-            (diagram::Side::Left, view.selected - right.len())
-        }
-    });
-    let note = if links.is_empty() {
-        "no foreign keys"
-    } else {
-        ""
-    };
-    let canvas = diagram::render(
-        usize::from(canvas_area.width),
-        usize::from(canvas_area.height),
-        &format!("{schema}.{table}"),
-        note,
-        &left,
-        &right,
-        selected,
-    );
-    let style_of = |paint: diagram::Paint| match paint {
-        diagram::Paint::Blank | diagram::Paint::Box => value,
-        diagram::Paint::Line | diagram::Paint::Note => dim,
-        diagram::Paint::Selected => Style::new().fg(theme.focus).add_modifier(Modifier::BOLD),
-        diagram::Paint::Center => label,
-    };
-    let lines: Vec<Line> = canvas
-        .cells
-        .iter()
-        .map(|row| {
-            // Runs of one paint become one span.
-            let mut spans: Vec<Span> = Vec::new();
-            let mut run = String::new();
-            let mut current = diagram::Paint::Blank;
-            for (ch, paint) in row {
-                if *paint != current && !run.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut run), style_of(current)));
-                }
-                current = *paint;
-                run.push(*ch);
-            }
-            if !run.is_empty() {
-                spans.push(Span::styled(run, style_of(current)));
-            }
-            Line::from(spans)
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), canvas_area);
 
-    // What the selected line is, in words.
-    if let Some(link) = links.get(view.selected) {
-        let (other_schema, other_table) = link.other();
-        let (holder, target) = if link.outgoing {
-            (
-                format!("{schema}.{table}"),
-                format!("{other_schema}.{other_table}"),
-            )
-        } else {
-            (
-                format!("{other_schema}.{other_table}"),
-                format!("{schema}.{table}"),
-            )
-        };
-        let text = format!(
-            "{}: {holder} ({}) → {target} ({})",
-            link.key.name,
-            link.key.columns.join(", "),
-            link.key.ref_columns.join(", ")
-        );
-        frame.render_widget(
-            Paragraph::new(Line::styled(fit(&text, usize::from(inner.width)), value)),
-            Rect {
-                y: inner.y + inner.height - 2,
-                height: 1,
-                ..inner
-            },
-        );
+    let rows = entry.rows();
+    match &entry.load {
+        Load::Loading => {
+            frame.render_widget(
+                Paragraph::new(Line::styled(format!("Reading {label}…"), dim)),
+                body,
+            );
+        }
+        Load::Failed(message) => {
+            frame.render_widget(
+                Paragraph::new(Line::styled(
+                    message.clone(),
+                    Style::new().fg(theme.error).add_modifier(Modifier::BOLD),
+                )),
+                body,
+            );
+        }
+        Load::Ready(_) => {
+            let selected = entry.selected;
+            let lines: Vec<Line> = rows
+                .iter()
+                .skip(entry.scroll)
+                .take(usize::from(body.height))
+                .map(|row| card_line(row, row.link == Some(selected), width, theme))
+                .collect();
+            frame.render_widget(Paragraph::new(lines), body);
+        }
     }
 
+    // Where the visible part sits, then the keys that work now.
     let key = |a| {
         app.keymap
-            .key_for(a, &[Scope::Relations], |_| true)
+            .key_for(a, &[Scope::Card], |_| true)
             .map_or(String::new(), |k| k.to_string())
     };
-    let back = if view.trail.len() > 1 {
-        format!("  {} back", key(Action::DialogBackspace))
-    } else {
-        String::new()
+    let mut hints: Vec<String> = Vec::new();
+    if !entry.references().is_empty() {
+        hints.push(format!("{} peck the table", key(Action::DialogSubmit)));
+    }
+    if entry.target.kind.is_relation() {
+        hints.push(format!("{} sample rows", key(Action::CardSample)));
+    }
+    if card.trail.len() > 1 {
+        hints.push(format!("{} back", key(Action::DialogBackspace)));
+    }
+    hints.push(format!("{} close", key(Action::DialogCancel)));
+    let mut text = hints.join("  ");
+    let visible = usize::from(body.height);
+    if rows.len() > visible {
+        let last = (entry.scroll + visible).min(rows.len());
+        text = format!("{}-{last} of {}  ·  {text}", entry.scroll + 1, rows.len());
+    }
+    frame.render_widget(Paragraph::new(Line::styled(fit(&text, width), dim)), footer);
+}
+
+/// One row of a card as a line `width` cells wide at most.
+fn card_line(row: &card::Row, selected: bool, width: usize, theme: &Theme) -> Line<'static> {
+    let style_of = |tone: Tone| match tone {
+        Tone::Plain => Style::new().fg(theme.value),
+        Tone::Strong => Style::new().fg(theme.value).add_modifier(Modifier::BOLD),
+        Tone::Heading => Style::new().fg(theme.label).add_modifier(Modifier::BOLD),
+        Tone::Dim => Style::new().fg(theme.dimmed),
+        Tone::Type => Style::new().fg(theme.focus),
+        Tone::Key => Style::new().fg(theme.warn).add_modifier(Modifier::BOLD),
+        Tone::Link => Style::new().fg(theme.keyword),
+        Tone::Warn => Style::new().fg(theme.error).add_modifier(Modifier::BOLD),
     };
-    let footer = if links.is_empty() {
-        format!("{} close", key(Action::DialogCancel))
+    let mut spans: Vec<Span> = Vec::new();
+    let mut used = 0usize;
+    for (n, card::Seg(text, tone)) in row.segs.iter().enumerate() {
+        let mut text = text.clone();
+        // The selected key row shows a marker where the margin was.
+        if selected && n == 0 && text.starts_with("  ") {
+            text.replace_range(0..2, "▶ ");
+        }
+        let room = width.saturating_sub(used);
+        if room == 0 {
+            break;
+        }
+        let shown: String = text.chars().take(room).collect();
+        used += shown.chars().map(cell_width).sum::<usize>();
+        spans.push(Span::styled(shown, style_of(*tone)));
+    }
+    if let Some(fill) = row.fill {
+        if used < width {
+            spans.push(Span::styled(
+                fill.to_string().repeat(width - used),
+                Style::new().fg(theme.dimmed),
+            ));
+        }
+    }
+    let line = Line::from(spans);
+    if selected {
+        line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD))
     } else {
-        format!(
-            "{} go to table{back}  {} sample rows  {} close",
-            key(Action::DialogSubmit),
-            key(Action::RelationSample),
-            key(Action::DialogCancel)
-        )
-    };
-    frame.render_widget(
-        Paragraph::new(Line::styled(footer, dim)),
-        Rect {
-            y: inner.y + inner.height - 1,
-            height: 1,
-            ..inner
-        },
-    );
+        line
+    }
 }
 
 /// The history window: what you ran before, with the newest first.
@@ -2767,15 +2783,16 @@ mod tests {
             assert_eq!(session.x, results.x);
             assert_eq!(session.width, results.width);
             assert!(context.x >= results.right(), "right column is on the right");
-            // The peck line is level with the editor, under the trends.
+            // The peck pane takes the rest of the column, under the trends.
             let peck = areas.peck.expect("p");
             assert_eq!(peck.bottom(), editor.bottom(), "{width}x{height}");
-            assert_eq!(peck.height, editor.height.clamp(6, 10));
+            assert!(peck.height >= 6, "{width}x{height}");
             assert_eq!(peck.x, context.x);
             if let Some(trends) = areas.trends {
                 assert_eq!(context.bottom(), trends.y);
                 assert_eq!(trends.x, context.x);
                 assert_eq!(trends.bottom(), peck.y);
+                assert!(trends.height <= 13, "trends keep their natural height");
             } else {
                 assert_eq!(context.bottom(), peck.y);
             }
@@ -3189,7 +3206,6 @@ mod tests {
                         "since date",
                     ),
                 ],
-                foreign_keys: Vec::new(),
             }),
         }));
         key(&mut a, KeyCode::Char('p'), KeyModifiers::CONTROL);
@@ -3298,41 +3314,21 @@ mod tests {
     }
 
     #[test]
-    fn the_relationship_view_lists_both_directions_and_the_way_back() {
-        use crate::catalog::foreign_key_from_row;
-        let mut a = connected_app(140, 30);
+    fn a_pecked_table_shows_its_card_with_columns_indexes_and_what_it_points_at() {
+        use crate::catalog::{Catalog, Kind, Object};
+        use crate::describe::{relation_from_rows, Detail, Row as Cells, Target, LIST_SEPARATOR};
+        let mut a = connected_app(140, 36);
         let conn = a.state.connections[0].id;
-        let fk = |row: [&str; 7]| foreign_key_from_row(row).expect("key");
         a.update(Event::Background(crate::events::Background::Catalog {
             conn,
-            result: Ok(crate::catalog::Catalog {
-                objects: vec![crate::catalog::Object {
-                    kind: crate::catalog::Kind::Table,
+            result: Ok(Catalog {
+                objects: vec![Object {
+                    kind: Kind::Table,
                     schema: "public".to_string(),
                     name: "orders".to_string(),
                     parent: None,
                     detail: String::new(),
                 }],
-                foreign_keys: vec![
-                    fk([
-                        "orders_customer_fk",
-                        "public",
-                        "orders",
-                        "customer_id",
-                        "sales",
-                        "customers",
-                        "id",
-                    ]),
-                    fk([
-                        "items_order_fk",
-                        "public",
-                        "items",
-                        "order_id",
-                        "public",
-                        "orders",
-                        "id",
-                    ]),
-                ],
             }),
         }));
         key(&mut a, KeyCode::Char('p'), KeyModifiers::CONTROL);
@@ -3340,36 +3336,192 @@ mod tests {
             key(&mut a, KeyCode::Char(c), KeyModifiers::NONE);
         }
         key(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
-        let out = render(&a, 140, 30);
+        // Before the answer arrives the card says what it waits for.
+        assert!(render(&a, 140, 36).contains("Reading public.orders"));
+        let cells =
+            |items: &[&str]| -> Cells { items.iter().map(|c| Some((*c).to_string())).collect() };
+        let sep = LIST_SEPARATOR;
+        let rows = vec![
+            cells(&[
+                "head",
+                "r",
+                "app",
+                "",
+                "1200000",
+                "400000",
+                "300000",
+                "100000",
+                "Customer orders",
+                "p",
+            ]),
+            cells(&[
+                "col",
+                "1",
+                "id",
+                "bigint",
+                "true",
+                "nextval('orders_id_seq'::regclass)",
+                "",
+                "true",
+                "false",
+                "",
+            ]),
+            cells(&[
+                "col",
+                "2",
+                "customer_id",
+                "bigint",
+                "true",
+                "",
+                "",
+                "false",
+                "true",
+                "",
+            ]),
+            cells(&[
+                "col", "3", "note", "text", "false", "", "", "false", "false", "",
+            ]),
+            cells(&[
+                "idx",
+                "orders_pkey",
+                "btree",
+                "id",
+                "true",
+                "true",
+                "",
+                "40000",
+                "true",
+                "",
+            ]),
+            cells(&[
+                "idx",
+                "orders_customer_idx",
+                "btree",
+                &format!("customer_id{sep}id"),
+                "false",
+                "false",
+                "",
+                "10000",
+                "true",
+                "",
+            ]),
+            cells(&[
+                "fk",
+                "orders_customer_fk",
+                "customer_id",
+                "sales",
+                "customers",
+                "id",
+                "c",
+                "a",
+                "true",
+                "",
+            ]),
+        ];
+        a.update(Event::Background(crate::events::Background::Described {
+            conn,
+            target: Target::relation("public", "orders"),
+            result: Ok(Detail::Relation(Box::new(
+                relation_from_rows("public", "orders", &rows).expect("found"),
+            ))),
+        }));
+        let out = render(&a, 140, 36);
         for expected in [
-            "Relationships: public.orders",
-            "sales.customers",
-            "public.items",
-            "(customer_id) → (id)",
-            "(order_id) → (id)",
-            "orders_customer_fk: public.orders (customer_id) → sales.customers (id)",
+            "public.orders · table",
+            "owner app",
+            "tablespace default",
+            "rows ~1.2M",
+            "“Customer orders”",
+            "COLUMNS 3",
+            "PK id",
+            "FK customer_id",
+            "NOT NULL",
+            "INDEXES 2",
+            "PRIMARY",
+            "REFERENCES 1",
+            "▶ (customer_id) → sales.customers (id)",
+            "on delete cascade",
+            "peck the table",
             "sample rows",
-            "▶",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
-        // The tables that point at this one are on the left, the ones it
-        // points at on the right.
-        let col = |text: &str| {
-            out.lines()
-                .find_map(|l| l.find(text).map(|i| l[..i].chars().count()))
-                .expect(text)
-        };
-        assert!(col("public.items") < col("Relationships") + 40, "{out}");
-        assert!(col("public.items") < col("sales.customers"), "{out}");
-        assert!(!out.contains("back"), "no way back from the first table");
-        assert_snapshot("relations_root_140x30", &out);
-        key(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        assert!(!out.contains("back"), "no way back from the first object");
+        assert_snapshot("card_table_140x36", &out);
+        // Following the key shows the way back.
         key(&mut a, KeyCode::Enter, KeyModifiers::NONE);
-        let out = render(&a, 140, 30);
-        assert!(out.contains("public.orders › public.items"), "{out}");
-        assert!(out.contains("Backspace back"), "{out}");
-        assert_snapshot("relations_140x30", &out);
+        let out = render(&a, 140, 36);
+        assert!(out.contains("public.orders › sales.customers"), "{out}");
+        assert!(out.contains("Reading sales.customers"), "{out}");
+        assert!(out.contains("back"), "{out}");
+    }
+
+    #[test]
+    fn a_pecked_function_shows_its_arguments_return_type_and_source() {
+        use crate::catalog::{Catalog, Kind, Object};
+        use crate::describe::{function_from_row, Detail, Row as Cells, Target};
+        let mut a = connected_app(140, 36);
+        let conn = a.state.connections[0].id;
+        a.update(Event::Background(crate::events::Background::Catalog {
+            conn,
+            result: Ok(Catalog {
+                objects: vec![Object {
+                    kind: Kind::Function,
+                    schema: "public".to_string(),
+                    name: "refresh_orders".to_string(),
+                    parent: None,
+                    detail: "since date".to_string(),
+                }],
+            }),
+        }));
+        key(&mut a, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        for c in "refresh".chars() {
+            key(&mut a, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        key(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
+        let cells: Cells = [
+            "f",
+            "since date, batch integer DEFAULT 100",
+            "integer",
+            "plpgsql",
+            "v",
+            "false",
+            "true",
+            "app",
+            "Rebuilds the totals",
+            "BEGIN\n  RETURN 1;\nEND",
+        ]
+        .iter()
+        .map(|c| Some((*c).to_string()))
+        .collect();
+        a.update(Event::Background(crate::events::Background::Described {
+            conn,
+            target: Target {
+                kind: Kind::Function,
+                schema: "public".to_string(),
+                name: "refresh_orders".to_string(),
+                args: "since date".to_string(),
+            },
+            result: Ok(Detail::Function(Box::new(function_from_row(
+                "public",
+                "refresh_orders",
+                &cells,
+            )))),
+        }));
+        let out = render(&a, 140, 36);
+        for expected in [
+            "public.refresh_orders(since date) · function",
+            "language plpgsql",
+            "runs as definer",
+            "ARGUMENTS 2",
+            "batch integer DEFAULT 100",
+            "RETURNS",
+            "SOURCE",
+            "RETURN 1;",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert!(!out.contains("sample rows"), "functions have no sample");
     }
 
     #[test]

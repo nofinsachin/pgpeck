@@ -1,0 +1,36 @@
+┌ Session ──────────────────────────────────────────────────────────────────────────────────┐                      ▄▄▄▄▄▄▄
+│Session: 127.0.0.1  Database: 127.0.0.1:5432, alice, app  TLS off                          │                   ▄██████████▄
+└───────────────────────────────────────────────────────────────────────────────────────────┘               ◀████████  ●  ▀██
+┌ ▶ public.orders · table ──────────────────────────────────────────────────────────────────┐                    ████████████
+│  owner app  ·  tablespace default                                                         │                     ▀████████▀
+│  rows ~1.2M  ·  size 390.6 kB                                                             │                      ▀▀▀▀▀▀▀
+│  █████████████████████▒▒▒▒▒▒▒  data 293.0 kB  ·  indexes 97.7 kB                          │                      PGPeck
+│  “Customer orders”                                                                        │┌ Context ────────────────────────────────────┐
+│                                                                                           ││Buffer     Buffer 1                          │
+│── COLUMNS 3 ──────────────────────────────────────────────────────────────────────────────││Statement  none under the cursor             │
+│  PK id           bigint  NOT NULL  default nextval('orders_id_seq'::regclass)             ││                                             │
+│  FK customer_id  bigint  NOT NULL                                                         │└─────────────────────────────────────────────┘
+│     note         text    null                                                             │┌ Trends ─────────────────────────────────────┐
+│                                                                                           ││Reading…                                     │
+│── INDEXES 2 ──────────────────────────────────────────────────────────────────────────────││                                             │
+│  orders_pkey          PRIMARY  btree  (id)                 39.1 kB ████████               ││                                             │
+│  orders_customer_idx           btree  (customer_id, id)     9.8 kB ██░░░░░░               ││                                             │
+│                                                                                           ││                                             │
+│── REFERENCES 1 ───────────────────────────────────────────────────────────────────────────││                                             │
+│▶ (customer_id) → sales.customers (id)   orders_customer_fk  on delete cascade             ││                                             │
+│                                                                                           ││                                             │
+│                                                                                           ││                                             │
+│                                                                                           ││                                             │
+│                                                                                           ││                                             │
+│Enter peck the table  s sample rows  Esc close                                             │└─────────────────────────────────────────────┘
+└───────────────────────────────────────────────────────────────────────────────────────────┘┌ Peck ───────────────────────────────────────┐
+┌ Editor ───────────────────────────────────────────────────────────────────────────────────┐│peck> peck a table, view or function         │
+│1                                                                                          ││Enter shows its card                         │
+│                                                                                           ││Recent                                       │
+│                                                                                           ││▶ public.orders                         table│
+│                                                                                           ││                                             │
+│                                                                                           ││                                             │
+│                                                                                           ││                                             │
+└───────────────────────────────────────────────────────────────────────────────────────────┘└─────────────────────────────────────────────┘
+Enter peck the table  S select sample rows  Esc close
+ (uri) │ app │ alice │ no TLS │ focus: Results │ Ln 1, Col 1

@@ -191,8 +191,8 @@
 "alt+n" = "find.jump_schema"
 # On a table or view: list only its columns. Again: back to everything.
 "alt+c" = "find.show_columns"
-# On a table or view: its foreign keys, in both directions.
-"alt+z" = "find.open_relationships"
+# Peck the selected table, view or function: show its card.
+"alt+z" = "find.peck"
 
 [form]
 "down" = "dialog.next"
@@ -220,18 +220,24 @@
 "ctrl+u" = "dialog.clear"
 "esc" = "focus.commands"
 
-[relations]
-# The relationship diagram, shown in place of the results. It has no search
-# box, so letters are free for commands.
+[card]
+# The card of a pecked table, view or function, shown in place of the results.
+# It has no search box, so letters are free for commands.
+# Up and Down choose among the foreign keys, or scroll when there are none.
 "up" = "dialog.prev"
 "down" = "dialog.next"
-# Show the table on the other end of the selected key.
+"pageup" = "results.page_up"
+"pagedown" = "results.page_down"
+"home" = "results.first_row"
+"end" = "results.last_row"
+# Peck the table the selected foreign key points at.
 "enter" = "dialog.submit"
-# Back to the table you came from.
+# Back to the object you came from.
 "backspace" = "dialog.backspace"
+# Close the card and bring the results back.
 "esc" = "dialog.cancel"
-# Select sample rows of the selected table.
-"s" = "relations.sample"
+# Select sample rows of the pecked table or view.
+"s" = "card.sample"
 
 [dialog]
 "up" = "help.scroll_up"

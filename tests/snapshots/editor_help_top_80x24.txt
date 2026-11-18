@@ -15,8 +15,8 @@
 │No│  Ctrl+Shift+Home   select to text start  editor.select_buffer_start    │  │
 └──│  Ctrl+Shift+Left   select word left      editor.select_word_left       │──┘
 ┌ ▶│  Ctrl+Shift+Right  select word right     editor.select_word_right      │──┐
-│1 │  Ctrl+Space        show suggestions      completion.trigger            │  │
-│  │  Ctrl+V            paste                 editor.paste                  │ey│
+│1 │  Ctrl+Space        show suggestions      completion.trigger            │ti│
+│  │  Ctrl+V            paste                 editor.paste                  │  │
 │  │  Ctrl+X            cut                   editor.cut                    │  │
 │  │  Ctrl+Y            redo                  editor.redo                   │  │
 └──└─────────────────── Up/Down scroll  ? close  (1/62) ────────────────────┘──┘

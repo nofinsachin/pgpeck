@@ -8,6 +8,7 @@ use futures_util::StreamExt;
 use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage};
 
 use crate::catalog::{self, Catalog};
+use crate::describe;
 use crate::profile::{Profile, SslMode};
 use crate::secrets::Secret;
 use crate::sql;
@@ -407,68 +408,136 @@ where t.typtype in ('e', 'd')
 limit 50000
 ";
 
-/// Foreign keys between the tables in `CATALOG_SQL`'s schemas. Column names
-/// are joined with the unit separator.
-const FOREIGN_KEYS_SQL: &str = r"
-select c.conname, fn.nspname, fc.relname,
-       (select string_agg(a.attname, chr(31) order by k.ord)
-          from unnest(c.conkey) with ordinality k(attnum, ord)
-          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum),
-       tn.nspname, tc.relname,
-       (select string_agg(a.attname, chr(31) order by k.ord)
-          from unnest(c.confkey) with ordinality k(attnum, ord)
-          join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum)
-from pg_constraint c
-join pg_class fc on fc.oid = c.conrelid
-join pg_namespace fn on fn.oid = fc.relnamespace
-join pg_class tc on tc.oid = c.confrelid
-join pg_namespace tn on tn.oid = tc.relnamespace
-where c.contype = 'f'
-  and fn.nspname !~ '^pg_' and fn.nspname <> 'information_schema'
-  and tn.nspname !~ '^pg_' and tn.nspname <> 'information_schema'
-order by fn.nspname, fc.relname, c.conname
-limit 20000
-";
-
 /// Reads the schemas, relations, columns, functions and types the user can
-/// see, and the foreign keys between tables. Call it only when the session is idle, like `stats`.
+/// see. Call it only when the session is idle, like `stats`.
 pub async fn catalog(session: &Session) -> Result<Catalog, DbError> {
-    // One round trip, so no other statement can slip in between the two reads.
     let messages = session
         .client
-        .simple_query(&format!("{CATALOG_SQL};\n{FOREIGN_KEYS_SQL}"))
+        .simple_query(CATALOG_SQL)
         .await
         .map_err(|e| DbError::from(&e))?;
     let mut objects = Vec::new();
-    let mut foreign_keys = Vec::new();
     for message in messages {
         let SimpleQueryMessage::Row(row) = message else {
             continue;
         };
         let text = |i: usize| row.get(i).unwrap_or("");
-        // The first query has five columns, the second seven.
-        if row.len() == 7 {
-            if let Some(key) = catalog::foreign_key_from_row([
-                text(0),
-                text(1),
-                text(2),
-                text(3),
-                text(4),
-                text(5),
-                text(6),
-            ]) {
-                foreign_keys.push(key);
-            }
-        } else if let Some(object) =
+        if let Some(object) =
             catalog::object_from_row([text(0), text(1), text(2), text(3), text(4)])
         {
             objects.push(object);
         }
     }
-    Ok(Catalog {
-        objects,
-        foreign_keys,
-    })
+    Ok(Catalog { objects })
+}
+
+/// Facts about one relation, as rows tagged `head`, `col`, `idx`, `fk` or
+/// `def`. Every column is text, so one query can carry all of them.
+const RELATION_SQL: &str = r"
+with t as (
+  select c.oid, c.relkind, c.relowner, c.reltablespace, c.reltuples, c.relpersistence
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = $1 and c.relname = $2 and c.relkind in ('r', 'p', 'v', 'm', 'f')
+)
+select 'head', t.relkind::text, pg_get_userbyid(t.relowner)::text,
+       coalesce((select spcname::text from pg_tablespace s where s.oid = t.reltablespace), ''),
+       t.reltuples::bigint::text,
+       case when t.relkind in ('r', 'm', 'p') then pg_total_relation_size(t.oid)::text else '' end,
+       case when t.relkind in ('r', 'm', 'p') then pg_table_size(t.oid)::text else '' end,
+       case when t.relkind in ('r', 'm', 'p') then pg_indexes_size(t.oid)::text else '' end,
+       coalesce(obj_description(t.oid, 'pg_class'), ''),
+       case when t.relkind = 'm'
+            then coalesce((select m.ispopulated::text from pg_matviews m
+                           where m.schemaname = $1 and m.matviewname = $2), '')
+            else t.relpersistence::text end
+from t
+union all
+select 'col', a.attnum::text, a.attname::text, format_type(a.atttypid, a.atttypmod),
+       a.attnotnull::text, coalesce(pg_get_expr(d.adbin, d.adrelid), ''),
+       a.attidentity::text || a.attgenerated::text,
+       exists(select 1 from pg_constraint k
+              where k.conrelid = t.oid and k.contype = 'p' and a.attnum = any (k.conkey))::text,
+       exists(select 1 from pg_constraint k
+              where k.conrelid = t.oid and k.contype = 'f' and a.attnum = any (k.conkey))::text,
+       ''
+from t
+join pg_attribute a on a.attrelid = t.oid and a.attnum > 0 and not a.attisdropped
+left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+union all
+select 'idx', ic.relname::text, am.amname::text,
+       coalesce((select string_agg(pg_get_indexdef(i.indexrelid, k, true), chr(31) order by k)
+                 from generate_series(1, i.indnkeyatts::int) k), ''),
+       i.indisunique::text, i.indisprimary::text,
+       coalesce(pg_get_expr(i.indpred, i.indrelid), ''),
+       pg_relation_size(i.indexrelid)::text, i.indisvalid::text,
+       coalesce((select spcname::text from pg_tablespace s where s.oid = ic.reltablespace), '')
+from t
+join pg_index i on i.indrelid = t.oid
+join pg_class ic on ic.oid = i.indexrelid
+join pg_am am on am.oid = ic.relam
+union all
+select 'fk', k.conname::text,
+       coalesce((select string_agg(a.attname::text, chr(31) order by u.ord)
+                 from unnest(k.conkey) with ordinality u(attnum, ord)
+                 join pg_attribute a on a.attrelid = k.conrelid and a.attnum = u.attnum), ''),
+       rn.nspname::text, rc.relname::text,
+       coalesce((select string_agg(a.attname::text, chr(31) order by u.ord)
+                 from unnest(k.confkey) with ordinality u(attnum, ord)
+                 join pg_attribute a on a.attrelid = k.confrelid and a.attnum = u.attnum), ''),
+       k.confdeltype::text, k.confupdtype::text, k.convalidated::text, ''
+from t
+join pg_constraint k on k.conrelid = t.oid and k.contype = 'f'
+join pg_class rc on rc.oid = k.confrelid
+join pg_namespace rn on rn.oid = rc.relnamespace
+union all
+select 'def', pg_get_viewdef(t.oid, true), '', '', '', '', '', '', '', ''
+from t where t.relkind in ('v', 'm')
+";
+
+const FUNCTION_SQL: &str = r"
+select p.prokind::text, pg_get_function_arguments(p.oid),
+       coalesce(pg_get_function_result(p.oid), ''), l.lanname::text, p.provolatile::text,
+       p.proisstrict::text, p.prosecdef::text, pg_get_userbyid(p.proowner)::text,
+       coalesce(obj_description(p.oid, 'pg_proc'), ''),
+       case when l.lanname in ('c', 'internal') then '' else p.prosrc end
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+join pg_language l on l.oid = p.prolang
+where n.nspname = $1 and p.proname = $2 and pg_get_function_identity_arguments(p.oid) = $3
+";
+
+/// Reads the facts about a table, view or function (pecking it). Not found is
+/// an error, for example when it was dropped after the schema was read.
+pub async fn describe(
+    session: &Session,
+    target: &describe::Target,
+) -> Result<describe::Detail, DbError> {
+    let gone = || DbError::new(format!("{} no longer exists", target.label()));
+    let cells = |row: &tokio_postgres::Row| -> describe::Row {
+        (0..row.len())
+            .map(|i| row.try_get::<_, Option<String>>(i).ok().flatten())
+            .collect()
+    };
+    if target.is_function() {
+        let rows = session
+            .client
+            .query(FUNCTION_SQL, &[&target.schema, &target.name, &target.args])
+            .await
+            .map_err(|e| DbError::from(&e))?;
+        let row = rows.first().ok_or_else(gone)?;
+        return Ok(describe::Detail::Function(Box::new(
+            describe::function_from_row(&target.schema, &target.name, &cells(row)),
+        )));
+    }
+    let rows = session
+        .client
+        .query(RELATION_SQL, &[&target.schema, &target.name])
+        .await
+        .map_err(|e| DbError::from(&e))?;
+    let rows: Vec<describe::Row> = rows.iter().map(cells).collect();
+    describe::relation_from_rows(&target.schema, &target.name, &rows)
+        .map(|d| describe::Detail::Relation(Box::new(d)))
+        .ok_or_else(gone)
 }
 
 /// Where the session is in a transaction (R16.1).
