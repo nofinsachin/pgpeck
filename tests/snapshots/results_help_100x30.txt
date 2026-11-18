@@ -1,16 +1,16 @@
-┌ Session ─────────────────────────────────────────────────────┐                ▄▄▄▄▄▄▄
-│Not connected                                                 │             ▄██████████▄
-└────────────┌───────────────────────────────── Help ─────────────────────────────────┐▀██
-┌ ▶ Results ─│results keys                                                            │███
-│            │  ?                 help                  help.toggle                   │█▀
-│            │  Down              row down              results.scroll_down           │
-│            │  End               last row              results.last_row              │
-│            │  Home              first row             results.first_row             │────────────┐
+┌ Session ─────────────────────────────────────────────────────┐┌ Context ─────────────────────────┐
+│Not connected                                                 ││Welcome to pgpeck.                │
+└────────────┌───────────────────────────────── Help ─────────────────────────────────┐a database. │
+┌ ▶ Results ─│results keys                                                            │mmands.     │
+│            │  ?                 help                  help.toggle                   │────────────┘
+│            │  Down              row down              results.scroll_down           │────────────┐
+│            │  End               last row              results.last_row              │            │
+│            │  Home              first row             results.first_row             │            │
 │            │  Left              columns left          results.scroll_left           │            │
-│            │  PageDown          page down             results.page_down             │a database. │
-│            │  PageUp            page up               results.page_up               │mmands.     │
-│            │  Right             columns right         results.scroll_right          │────────────┘
-│            │  Up                row up                results.scroll_up             │────────────┐
+│            │  PageDown          page down             results.page_down             │            │
+│            │  PageUp            page up               results.page_up               │            │
+│            │  Right             columns right         results.scroll_right          │            │
+│            │  Up                row up                results.scroll_up             │            │
 │            │  [                 previous result       results.prev_tab              │            │
 │            │  ]                 next result           results.next_tab              │            │
 │            │  c                 connect               connection.open               │            │
@@ -18,13 +18,13 @@
 │            │  q                 quit                  app.quit                      │            │
 │            │  r                 run                   query.run_statement           │            │
 │No results y│                                                                        │            │
-└────────────│global keys                                                             │            │
-┌ Editor ────│  Alt+1             focus context         focus.context                 │            │
-│1           │  Alt+2             edit                  focus.editor                  │            │
-│            │  Alt+3             focus results         focus.results                 │            │
-│            │  Alt+4             focus session         focus.session                 │            │
+└────────────│global keys                                                             │────────────┘
+┌ Editor ────│  Alt+1             focus context         focus.context                 │────────────┐
+│1           │  Alt+2             edit                  focus.editor                  │name        │
+│            │  Alt+3             focus results         focus.results                 │ foreign key│
+│            │  Alt+4             focus session         focus.session                 │aves.       │
+│            │  Alt+5             focus peck            focus.peck                    │            │
 │            │  Alt+H             history               history.open                  │            │
-│            │  Alt+Left          previous buffer       buffer.prev                   │            │
-└────────────└─────────────────── Up/Down scroll  ? close  (1/28) ────────────────────┘────────────┘
+└────────────└─────────────────── Up/Down scroll  ? close  (1/30) ────────────────────┘────────────┘
 C connect  R run  E edit  Q quit  ? help
  no connection │ focus: Results │ Ln 1, Col 1

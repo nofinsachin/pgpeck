@@ -13,11 +13,11 @@
 │              │                                                          │              │
 │              │                                                          │              │
 │No results yet│Tab next field  Enter reconnect  Esc cancel               │              │
-└──────────────└──────────────────────────────────────────────────────────┘              │
-┌ Editor ────────────────────────────────────────────┐│                                  │
-│1                                                   ││                                  │
-│                                                    ││                                  │
-│                                                    ││                                  │
+└──────────────└──────────────────────────────────────────────────────────┘──────────────┘
+┌ Editor ────────────────────────────────────────────┐┌ Peck ────────────────────────────┐
+│1                                                   ││peck> a table or view name        │
+│                                                    ││peck orders  draws its foreign key│
+│                                                    ││Enter draws it. Esc leaves.       │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
 D change database  U change user  F5 refresh session  Z roll back  C connect  Esc commands

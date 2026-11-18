@@ -25,6 +25,7 @@ pub enum Action {
     FocusEditor,
     FocusResults,
     FocusSession,
+    FocusPeck,
     FocusNext,
     FocusPrev,
     /// Leaves the editor for the commands pane, where single keys work.
@@ -93,6 +94,7 @@ const ACTIONS: &[(&str, Action)] = &[
     ("focus.editor", Action::FocusEditor),
     ("focus.results", Action::FocusResults),
     ("focus.session", Action::FocusSession),
+    ("focus.peck", Action::FocusPeck),
     ("focus.next", Action::FocusNext),
     ("focus.prev", Action::FocusPrev),
     ("focus.commands", Action::FocusCommands),
@@ -299,6 +301,7 @@ impl Action {
             Action::FocusEditor => "edit",
             Action::FocusResults => "focus results",
             Action::FocusSession => "focus session",
+            Action::FocusPeck => "focus peck",
             Action::FocusNext => "next pane",
             Action::FocusPrev => "previous pane",
             Action::ToggleContext => "toggle context strip",
@@ -383,6 +386,8 @@ pub enum Scope {
     Find,
     /// The relationship view.
     Relations,
+    /// The peck command line.
+    Peck,
     /// The form for entering connection details.
     Form,
     /// The password prompt.
@@ -402,6 +407,7 @@ impl Scope {
             Scope::Picker => "picker",
             Scope::Find => "find",
             Scope::Relations => "relations",
+            Scope::Peck => "peck",
             Scope::Form => "form",
             Scope::Prompt => "prompt",
             Scope::Dialog => "dialog",
@@ -419,6 +425,7 @@ impl Scope {
             Scope::Picker,
             Scope::Find,
             Scope::Relations,
+            Scope::Peck,
             Scope::Form,
             Scope::Prompt,
             Scope::Dialog,
@@ -437,6 +444,7 @@ impl Scope {
                 | Scope::Completion
                 | Scope::Picker
                 | Scope::Find
+                | Scope::Peck
                 | Scope::Form
                 | Scope::Prompt
         )
@@ -826,6 +834,7 @@ mod tests {
             Scope::Picker,
             Scope::Find,
             Scope::Relations,
+            Scope::Peck,
             Scope::Form,
             Scope::Prompt,
             Scope::Dialog,

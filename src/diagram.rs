@@ -163,9 +163,9 @@ pub fn render(
 ) -> Canvas {
     let mut canvas = Canvas::new(width, height);
     // Columns: left box, gap, middle box, gap, right box.
-    let gap = 7usize.min(width / 8).max(3);
-    let center_width = (width / 3)
-        .clamp(14, 28)
+    let gap = (width / 12).clamp(3, 6);
+    let center_width = (width / 4)
+        .clamp(18, 26)
         .min(width.saturating_sub(2 * gap + 8));
     let side_width = width.saturating_sub(center_width + 2 * gap) / 2;
     if side_width < 8 || height < BOX_HEIGHT {
@@ -516,6 +516,6 @@ mod tests {
         // below.
         assert!(out.contains("┼"), "{out}");
         assert!(out.contains("┴") || out.contains("┬"), "{out}");
-        assert!(out.contains("┌──▶"), "{out}");
+        assert!(out.contains("┌─▶"), "{out}");
     }
 }

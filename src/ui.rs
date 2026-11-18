@@ -67,7 +67,13 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         draw_session(frame, app, theme, rect, areas.hint.height == 0);
     }
     if let Some(rect) = areas.results {
-        draw_results(frame, app, theme, rect);
+        match &app.state.diagram {
+            Some(view) => draw_diagram(frame, app, theme, view, rect),
+            None => draw_results(frame, app, theme, rect),
+        }
+    }
+    if let Some(rect) = areas.peck {
+        draw_peck(frame, app, theme, rect);
     }
     if let (Some(rect), Some(_)) = (areas.editor, &app.state.completion) {
         draw_completion(frame, app, theme, rect);
@@ -83,7 +89,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         Some(Dialog::Picker(picker)) => draw_picker(frame, app, theme, picker, area),
         Some(Dialog::Find(find)) => draw_find(frame, app, theme, find, area),
         Some(Dialog::History(picker)) => draw_history(frame, app, theme, picker, area),
-        Some(Dialog::Relations(view)) => draw_relations(frame, app, theme, view, area),
         Some(Dialog::Form(form)) => draw_form(frame, app, theme, form, area),
         Some(Dialog::Session(form)) => draw_session_form(frame, app, theme, form, area),
         Some(Dialog::Password(_)) => draw_password(frame, app, theme, area),
@@ -1190,7 +1195,7 @@ fn hint_spans(app: &App, theme: &Theme, width: usize) -> Vec<Span<'static>> {
             continue;
         };
         let key = key_label(key);
-        let label = format!(" {}", action.description());
+        let label = format!(" {}", app.hint_label(*action));
         let separator = if spans.is_empty() { 0 } else { 2 };
         let needed = separator + key.chars().count() + label.chars().count();
         // Drop hints that do not fit, instead of cutting one in half.
@@ -1446,21 +1451,96 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pic
     frame.render_widget(Paragraph::new(Line::styled(footer, dim)), footer_area);
 }
 
-/// The find overlay: a search box over results grouped by kind (R9).
-/// The relationship view: what the table points to, and what points to it.
-fn draw_relations(frame: &mut Frame, app: &App, theme: &Theme, view: &relations::View, area: Rect) {
+/// The peck command line: what you type, then the tables it matches or the
+/// answer to the last command.
+fn draw_peck(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let dim = Style::new().fg(theme.dimmed);
+    let value = Style::new().fg(theme.value);
+    let block = pane_block(app, theme, Pane::Peck);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+    let peck = &app.state.peck;
+    let focused = app.state.focus == Pane::Peck;
+    let prompt = "peck> ";
+    let mut first = vec![Span::styled(prompt, Style::new().fg(theme.label))];
+    if peck.input.is_empty() {
+        first.push(Span::styled("a table or view name", dim));
+    } else {
+        first.push(Span::styled(peck.input.clone(), value));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(first)),
+        Rect { height: 1, ..inner },
+    );
+    if focused {
+        let typed: usize = peck.input.chars().map(cell_width).sum();
+        let x =
+            inner.x + (prompt.len() + typed).min(usize::from(inner.width.saturating_sub(1))) as u16;
+        frame.set_cursor_position((x, inner.y));
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    let matches = app.peck_matches();
+    if let Some(message) = &peck.message {
+        lines.push(Line::styled(message.clone(), Style::new().fg(theme.error)));
+    } else if !matches.is_empty() {
+        for (index, object) in matches.iter().enumerate() {
+            let selected = index == peck.selected;
+            let mut line = Line::from(vec![
+                Span::styled(if selected { "▶ " } else { "  " }, value),
+                Span::styled(object.path(), value),
+                Span::raw("  "),
+                Span::styled(object.kind.label(), dim),
+            ]);
+            if selected && focused {
+                line = line.style(Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD));
+            }
+            lines.push(line);
+        }
+    } else if peck.input.is_empty() {
+        lines.push(Line::styled("peck orders  draws its foreign keys", dim));
+        lines.push(Line::styled("Enter draws it. Esc leaves.", dim));
+    } else if matches!(
+        crate::peck::parse(&peck.input),
+        crate::peck::Command::Table(_)
+    ) {
+        lines.push(Line::styled("No table or view matches", dim));
+    }
+    frame.render_widget(
+        Paragraph::new(lines),
+        Rect {
+            y: inner.y + 1,
+            height: inner.height.saturating_sub(1),
+            ..inner
+        },
+    );
+}
+
+/// The relationship diagram, drawn in place of the results.
+fn draw_diagram(frame: &mut Frame, app: &App, theme: &Theme, view: &relations::View, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
     let label = Style::new().fg(theme.label).add_modifier(Modifier::BOLD);
     let value = Style::new().fg(theme.value);
-    let popup = layout::centered(area, 90, area.height.saturating_sub(4).clamp(8, 22));
-    clear(frame, theme, popup);
     let (schema, table) = view.current();
+    // Drawn in the results' place, so it takes the results' focus marks.
+    let focused = app.state.focus == Pane::Results;
+    let (title, border) = if focused {
+        (
+            format!(" ▶ Relationships: {schema}.{table} "),
+            Style::new().fg(theme.focus).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (format!(" Relationships: {schema}.{table} "), dim)
+    };
     let block = Block::bordered()
-        .title(format!(" Relationships: {schema}.{table} "))
-        .title_alignment(Alignment::Center)
-        .border_style(Style::new().fg(theme.focus));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
+        .title(title)
+        .border_style(border)
+        .title_style(border);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
     if inner.height < 4 {
         return;
     }
@@ -1720,6 +1800,7 @@ fn draw_history(frame: &mut Frame, app: &App, theme: &Theme, picker: &picker::Pi
     );
 }
 
+/// The find overlay: a search box over results grouped by kind (R9).
 fn draw_find(frame: &mut Frame, app: &App, theme: &Theme, find: &picker::Picker, area: Rect) {
     let dim = Style::new().fg(theme.dimmed);
     let label = Style::new().fg(theme.label);
@@ -2686,12 +2767,17 @@ mod tests {
             assert_eq!(session.x, results.x);
             assert_eq!(session.width, results.width);
             assert!(context.x >= results.right(), "right column is on the right");
+            // The peck line is level with the editor, under the trends.
+            let peck = areas.peck.expect("p");
+            assert_eq!(peck.bottom(), editor.bottom(), "{width}x{height}");
+            assert_eq!(peck.height, editor.height.clamp(6, 10));
+            assert_eq!(peck.x, context.x);
             if let Some(trends) = areas.trends {
                 assert_eq!(context.bottom(), trends.y);
                 assert_eq!(trends.x, context.x);
-                assert_eq!(trends.bottom(), editor.bottom());
+                assert_eq!(trends.bottom(), peck.y);
             } else {
-                assert_eq!(context.bottom(), editor.bottom());
+                assert_eq!(context.bottom(), peck.y);
             }
         }
     }
@@ -3146,8 +3232,8 @@ mod tests {
             table_size("public", "users", 8_000_000),
             table_size("public", "tiny", 10_000),
         ];
-        let a = with_stats(160, 24, stats);
-        let out = render(&a, 160, 24);
+        let a = with_stats(160, 32, stats);
+        let out = render(&a, 160, 32);
         for expected in [
             "Trends",
             "Largest tables",
@@ -3163,7 +3249,7 @@ mod tests {
         assert!(events.contains(&"█".repeat(8)), "{events}");
         let tiny = out.lines().find(|l| l.contains("tiny")).expect("row");
         assert!(tiny.contains('█'), "{tiny}");
-        assert_snapshot("trends_160x24", &out);
+        assert_snapshot("trends_160x32", &out);
     }
 
     #[test]
@@ -3214,7 +3300,7 @@ mod tests {
     #[test]
     fn the_relationship_view_lists_both_directions_and_the_way_back() {
         use crate::catalog::foreign_key_from_row;
-        let mut a = connected_app(100, 30);
+        let mut a = connected_app(140, 30);
         let conn = a.state.connections[0].id;
         let fk = |row: [&str; 7]| foreign_key_from_row(row).expect("key");
         a.update(Event::Background(crate::events::Background::Catalog {
@@ -3254,7 +3340,7 @@ mod tests {
             key(&mut a, KeyCode::Char(c), KeyModifiers::NONE);
         }
         key(&mut a, KeyCode::Char('z'), KeyModifiers::ALT);
-        let out = render(&a, 100, 30);
+        let out = render(&a, 140, 30);
         for expected in [
             "Relationships: public.orders",
             "sales.customers",
@@ -3277,13 +3363,13 @@ mod tests {
         assert!(col("public.items") < col("Relationships") + 40, "{out}");
         assert!(col("public.items") < col("sales.customers"), "{out}");
         assert!(!out.contains("back"), "no way back from the first table");
-        assert_snapshot("relations_root_100x30", &out);
+        assert_snapshot("relations_root_140x30", &out);
         key(&mut a, KeyCode::Down, KeyModifiers::NONE);
         key(&mut a, KeyCode::Enter, KeyModifiers::NONE);
-        let out = render(&a, 100, 30);
+        let out = render(&a, 140, 30);
         assert!(out.contains("public.orders › public.items"), "{out}");
         assert!(out.contains("Backspace back"), "{out}");
-        assert_snapshot("relations_100x30", &out);
+        assert_snapshot("relations_140x30", &out);
     }
 
     #[test]

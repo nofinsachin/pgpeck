@@ -13,11 +13,11 @@
 │        │UPDATE or DELETE without WHERE changes every row.                     │        │
 │        │                                                                      │        │
 │No resul│Run it? Type y or yes:                                                │        │
-└────────│Enter run (after y or yes)  Esc cancel                                │        │
-┌ ▶ Edito└──────────────────────────────────────────────────────────────────────┘        │
-│1 DELETE FROM orders                                ││                                  │
-│                                                    ││                                  │
-│                                                    ││                                  │
+└────────│Enter run (after y or yes)  Esc cancel                                │────────┘
+┌ ▶ Edito└──────────────────────────────────────────────────────────────────────┘────────┐
+│1 DELETE FROM orders                                ││peck> a table or view name        │
+│                                                    ││peck orders  draws its foreign key│
+│                                                    ││Enter draws it. Esc leaves.       │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
 Ctrl+R run  Esc commands  Ctrl+O connect

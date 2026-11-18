@@ -16,10 +16,16 @@ const SIDE_MIN_WIDTH: u16 = 36;
 const SIDE_MAX_WIDTH: u16 = 50;
 
 /// Heights, borders included. The context pane holds the welcome text before
-/// you connect, which is three lines. The trends pane needs 13 rows for its
-/// heading, five tables and five numbers, so it is left out below that.
+/// you connect, which is three lines. The trends pane shows everything in 13
+/// rows (five numbers, a heading and five tables). With fewer it shows the
+/// numbers first and cuts the tables, and below 9 rows it is left out.
 const CONTEXT_HEIGHT: u16 = 5;
-const TRENDS_MIN_HEIGHT: u16 = 13;
+const TRENDS_MIN_HEIGHT: u16 = 9;
+const TRENDS_FULL_HEIGHT: u16 = 13;
+/// The peck command line sits under the trends, level with the editor. It is
+/// never shorter than this, and never taller than `PECK_MAX_HEIGHT`.
+const PECK_MIN_HEIGHT: u16 = 6;
+const PECK_MAX_HEIGHT: u16 = 10;
 /// The logo above the context pane, shown when the column has room for it
 /// on top of everything else.
 pub const LOGO_HEIGHT: u16 = 7;
@@ -46,6 +52,8 @@ pub struct Areas {
     pub logo: Option<Rect>,
     /// Largest tables. Left out when the right column is too short.
     pub trends: Option<Rect>,
+    /// The peck command line, level with the editor.
+    pub peck: Option<Rect>,
     pub results: Option<Rect>,
     pub hint: Rect,
     pub status: Rect,
@@ -75,6 +83,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
         session: None,
         logo: None,
         trends: None,
+        peck: None,
         results: None,
         hint,
         status,
@@ -89,6 +98,7 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
             Pane::Context => areas.context = Some(pane),
             Pane::Session => areas.session = Some(pane),
             Pane::Results => areas.results = Some(pane),
+            Pane::Peck => areas.peck = Some(pane),
         }
         return areas;
     }
@@ -127,26 +137,40 @@ pub fn compute(area: Rect, state: &State, config: &Config) -> Areas {
     }
 
     if let Some(side) = side {
-        let with_trends = state.show_trends && side.height >= CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT;
-        let needed = CONTEXT_HEIGHT + if with_trends { TRENDS_MIN_HEIGHT } else { 0 };
-        let side = if side.height >= LOGO_HEIGHT + needed {
+        // The peck line takes the bottom of the column, level with the editor.
+        let editor_rows = areas.editor.map_or(PECK_MIN_HEIGHT, |e| e.height);
+        let peck_height = editor_rows.clamp(PECK_MIN_HEIGHT, PECK_MAX_HEIGHT);
+        let with_peck = side.height >= CONTEXT_HEIGHT + peck_height;
+        let (top, peck) = if with_peck {
+            let [top, peck] =
+                Split::vertical([Constraint::Min(0), Constraint::Length(peck_height)]).areas(side);
+            (top, Some(peck))
+        } else {
+            (side, None)
+        };
+        areas.peck = peck;
+
+        let with_trends = state.show_trends && top.height >= CONTEXT_HEIGHT + TRENDS_MIN_HEIGHT;
+        // The logo needs the trends to have all their rows as well.
+        let needed = CONTEXT_HEIGHT + if with_trends { TRENDS_FULL_HEIGHT } else { 0 };
+        let top = if top.height >= LOGO_HEIGHT + needed {
             let [logo, rest] =
-                Split::vertical([Constraint::Length(LOGO_HEIGHT), Constraint::Min(0)]).areas(side);
+                Split::vertical([Constraint::Length(LOGO_HEIGHT), Constraint::Min(0)]).areas(top);
             areas.logo = Some(logo);
             rest
         } else {
-            side
+            top
         };
         if with_trends {
             let [context, trends] = Split::vertical([
                 Constraint::Length(CONTEXT_HEIGHT),
                 Constraint::Min(TRENDS_MIN_HEIGHT),
             ])
-            .areas(side);
+            .areas(top);
             areas.context = Some(context);
             areas.trends = Some(trends);
         } else {
-            areas.context = Some(side);
+            areas.context = Some(top);
         }
     }
     areas

@@ -15,11 +15,11 @@
 │         │  Production  [ ] no  (Space to switch)                             │         │
 │         │                                                                    │         │
 │No result│                                                                    │         │
-└─────────│                                                                    │         │
-┌ Editor ─│Tab next field  Enter connect  Esc back                             │         │
-│1        └────────────────────────────────────────────────────────────────────┘         │
-│                                                    ││                                  │
-│                                                    ││                                  │
+└─────────│                                                                    │─────────┘
+┌ Editor ─│Tab next field  Enter connect  Esc back                             │─────────┐
+│1        └────────────────────────────────────────────────────────────────────┘e        │
+│                                                    ││peck orders  draws its foreign key│
+│                                                    ││Enter draws it. Esc leaves.       │
 │                                                    ││                                  │
 └────────────────────────────────────────────────────┘└──────────────────────────────────┘
 C connect  F find  H history  R run  E edit  N new buffer  Q quit  ? help

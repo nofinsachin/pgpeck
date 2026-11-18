@@ -13,11 +13,11 @@
 │                                          ││                                  │
 │                                          ││                                  │
 │No┌────────────┐Run with Ctrl+R.          ││                                  │
-└──│  desc    kw│──────────────────────────┘│                                  │
-┌ ▶│▶ delete  kw│──────────────────────────┐│                                  │
-│1 │  declare kw│                          ││                                  │
-│2 │  default kw│                          ││                                  │
-│3 └────────────┘                          ││                                  │
+└──│  desc    kw│──────────────────────────┘└──────────────────────────────────┘
+┌ ▶│▶ delete  kw│──────────────────────────┐┌ Peck ────────────────────────────┐
+│1 │  declare kw│                          ││peck> a table or view name        │
+│2 │  default kw│                          ││peck orders  draws its foreign key│
+│3 └────────────┘                          ││Enter draws it. Esc leaves.       │
 │4 de                                      ││                                  │
 └──────────────────────────────────────────┘└──────────────────────────────────┘
 Enter accept suggestion  Down next suggestion  Esc dismiss suggestions

@@ -16,6 +16,7 @@ use crate::form::{ConnectForm, SessionForm};
 use crate::history;
 use crate::keymap::{Action, KeyChord, Keymap, Scope};
 use crate::layout;
+use crate::peck;
 use crate::picker::{self, Picker};
 use crate::profile::{self, Profile, Profiles};
 use crate::relations;
@@ -30,6 +31,8 @@ pub enum Pane {
     Context,
     Session,
     Results,
+    /// The peck command line under the trends.
+    Peck,
 }
 
 impl Pane {
@@ -39,6 +42,7 @@ impl Pane {
             Pane::Context => "Context",
             Pane::Session => "Session",
             Pane::Results => "Results",
+            Pane::Peck => "Peck",
         }
     }
 
@@ -48,6 +52,7 @@ impl Pane {
             Pane::Context => Scope::Context,
             Pane::Session => Scope::Session,
             Pane::Results => Scope::Results,
+            Pane::Peck => Scope::Peck,
         }
     }
 }
@@ -82,6 +87,10 @@ pub struct State {
     pub next_conn: ConnId,
     /// Saved connection profiles.
     pub profiles: Profiles,
+    /// The relationship diagram shown in place of the results, when open.
+    pub diagram: Option<relations::View>,
+    /// What is typed in the peck command line.
+    pub peck: PeckState,
     /// The statements run before, oldest first.
     pub history: Vec<history::Entry>,
     /// Where the history is kept. `None` turns recording off.
@@ -162,8 +171,6 @@ pub enum Dialog {
     Find(Picker),
     /// The statements run before. It reuses the picker's input and selection.
     History(Picker),
-    /// The foreign keys of one table.
-    Relations(relations::View),
     /// Connection details typed by hand.
     Form(ConnectForm),
     /// Database and user of the current connection.
@@ -171,6 +178,16 @@ pub enum Dialog {
     Password(PasswordPrompt),
     /// Asks before a risky statement runs (R15).
     Confirm(Confirm),
+}
+
+/// The peck command line.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PeckState {
+    pub input: String,
+    /// Which of the matching tables Enter opens.
+    pub selected: usize,
+    /// The last answer, for example why a command did nothing.
+    pub message: Option<String>,
 }
 
 /// A statement waiting for the user's yes (R15.4).
@@ -310,6 +327,8 @@ impl State {
             connections: Vec::new(),
             next_conn: 1,
             profiles: Profiles::default(),
+            diagram: None,
+            peck: PeckState::default(),
             history: Vec::new(),
             history_path: None,
             dialog: None,
@@ -329,6 +348,7 @@ impl State {
         if self.show_context {
             panes.push(Pane::Session);
             panes.push(Pane::Context);
+            panes.push(Pane::Peck);
         }
         panes
     }
@@ -450,7 +470,7 @@ impl App {
         let pane_action = if editor_ignores_tab {
             None
         } else {
-            self.keymap.lookup(st.focus.scope(), chord)
+            self.keymap.lookup(self.key_scope(), chord)
         };
         let action = popup_action
             .or(pane_action)
@@ -475,6 +495,15 @@ impl App {
                     self.state.notice = None;
                     self.state.editor_mut().insert_char(c, &opts);
                     self.refresh_completion(false);
+                }
+            }
+            // The peck line takes printable keys too.
+            None if st.focus == Pane::Peck && chord.is_printable() => {
+                if let KeyCode::Char(c) = chord.code {
+                    let peck = &mut self.state.peck;
+                    peck.input.push(c);
+                    peck.selected = 0;
+                    peck.message = None;
                 }
             }
             None => {}
@@ -532,6 +561,14 @@ impl App {
                 .for_each(|c| self.dialog_type(c));
             return;
         }
+        if self.state.focus == Pane::Peck && !self.state.help_open {
+            // One line only, like the dialogs.
+            let peck = &mut self.state.peck;
+            peck.input.extend(text.chars().filter(|c| !c.is_control()));
+            peck.selected = 0;
+            peck.message = None;
+            return;
+        }
         if self.state.help_open || self.state.focus != Pane::Editor {
             return;
         }
@@ -580,6 +617,26 @@ impl App {
                 Action::FocusCommands,
                 Action::HelpToggle,
             ],
+            // The way back is offered only after following a key.
+            Pane::Results
+                if self
+                    .state
+                    .diagram
+                    .as_ref()
+                    .is_some_and(|v| v.trail.len() > 1) =>
+            {
+                &[
+                    Action::DialogSubmit,
+                    Action::DialogBackspace,
+                    Action::RelationSample,
+                    Action::DialogCancel,
+                ]
+            }
+            Pane::Results if self.state.diagram.is_some() => &[
+                Action::DialogSubmit,
+                Action::RelationSample,
+                Action::DialogCancel,
+            ],
             Pane::Results => &[
                 Action::ConnectionOpen,
                 Action::QueryRun,
@@ -587,12 +644,43 @@ impl App {
                 Action::AppQuit,
                 Action::HelpToggle,
             ],
+            Pane::Peck => &[
+                Action::DialogSubmit,
+                Action::DialogNext,
+                Action::FocusCommands,
+                Action::HelpToggle,
+            ],
+        }
+    }
+
+    /// What a hint says for `action`. The dialog actions mean something more
+    /// specific in the peck line and in the diagram.
+    pub fn hint_label(&self, action: Action) -> &'static str {
+        let diagram = self.state.focus == Pane::Results && self.state.diagram.is_some();
+        match (action, self.state.focus, diagram) {
+            (Action::DialogSubmit, _, true) => "go to table",
+            (Action::DialogBackspace, _, true) => "back",
+            (Action::DialogCancel, _, true) => "close diagram",
+            (Action::DialogSubmit, Pane::Peck, _) => "draw",
+            (Action::DialogNext, Pane::Peck, _) => "next match",
+            (Action::FocusCommands, Pane::Peck, _) => "leave",
+            _ => action.description(),
+        }
+    }
+
+    /// The scope whose keys the focused pane uses. The diagram, when open, has
+    /// its own keys in place of the results'.
+    fn key_scope(&self) -> Scope {
+        if self.state.focus == Pane::Results && self.state.diagram.is_some() {
+            Scope::Relations
+        } else {
+            self.state.focus.scope()
         }
     }
 
     /// The key to show for `action` in the focused pane, for hints.
     pub fn hint_key(&self, action: Action) -> Option<KeyChord> {
-        let scopes = [Scope::Completion, self.state.focus.scope(), Scope::Global];
+        let scopes = [Scope::Completion, self.key_scope(), Scope::Global];
         let owns_tab = self.editor_owns_tab();
         self.keymap.key_for(action, &scopes, |k| {
             !(owns_tab && matches!(k.code, KeyCode::Tab | KeyCode::BackTab))
@@ -749,6 +837,10 @@ impl App {
                 self.state.show_context = true;
                 self.state.focus = Pane::Context;
             }
+            Action::FocusPeck => {
+                self.state.show_context = true;
+                self.state.focus = Pane::Peck;
+            }
             Action::FocusSession => {
                 self.state.show_context = true;
                 self.state.focus = Pane::Session;
@@ -836,20 +928,26 @@ impl App {
                     r.select_tab(1);
                 }
             }
-            // These act only inside dialogs, which handle them themselves.
+            // Dialogs handle these themselves. In the peck line and the
+            // diagram they are the pane's own keys.
             Action::DialogNext
             | Action::DialogPrev
             | Action::DialogSubmit
             | Action::DialogCancel
             | Action::DialogBackspace
-            | Action::DialogClear
-            | Action::PickerSaveProfile
+            | Action::DialogClear => match self.state.focus {
+                Pane::Peck => self.peck_action(action),
+                Pane::Results => self.diagram_action(action),
+                _ => {}
+            },
+            Action::PickerSaveProfile
             | Action::PickerEditProfile
             | Action::FindSample
             | Action::FindJump(_)
             | Action::FindColumns
-            | Action::FindRelations
-            | Action::RelationSample => {}
+            | Action::FindRelations => {}
+            // Typing and selecting belong to the peck line and the diagram.
+            Action::RelationSample => self.diagram_action(action),
             Action::FindOpen => self.open_find(),
             Action::HistoryOpen => self.open_history(),
             Action::CompletionTrigger => self.refresh_completion(true),
@@ -944,9 +1042,49 @@ impl App {
             .map_or_else(Vec::new, |catalog| view.links(catalog))
     }
 
+    /// Shows the foreign keys of a table in place of the results.
+    fn open_diagram(&mut self, schema: &str, table: &str) {
+        self.state.dialog = None;
+        self.state.diagram = Some(relations::View::new(schema, table));
+        self.state.show_results = true;
+        self.state.focus = Pane::Results;
+    }
+
+    /// The keys of the diagram: select, follow, go back, sample, close.
+    fn diagram_action(&mut self, action: Action) {
+        let conn = self.state.doc().connection;
+        let Some(view) = &mut self.state.diagram else {
+            return;
+        };
+        match action {
+            Action::DialogNext | Action::DialogPrev => {
+                let count = Self::relation_links(&self.state.connections, conn, view).len();
+                if action == Action::DialogNext {
+                    view.select_next(count);
+                } else {
+                    view.select_previous(count);
+                }
+            }
+            Action::DialogSubmit => {
+                let target = Self::relation_links(&self.state.connections, conn, view)
+                    .get(view.selected)
+                    .copied();
+                if let Some(link) = target {
+                    view.follow(&link);
+                }
+            }
+            Action::DialogBackspace => {
+                view.back();
+            }
+            Action::DialogCancel => self.state.diagram = None,
+            Action::RelationSample => self.sample_related(),
+            _ => {}
+        }
+    }
+
     /// S selects sample rows of the selected table and runs the query.
-    fn submit_relation(&mut self) {
-        let Some(Dialog::Relations(view)) = &self.state.dialog else {
+    fn sample_related(&mut self) {
+        let Some(view) = &self.state.diagram else {
             return;
         };
         let conn = self.state.doc().connection;
@@ -955,7 +1093,7 @@ impl App {
             return;
         };
         let other = link.other();
-        self.state.dialog = None;
+        self.state.diagram = None;
         self.state.focus = Pane::Editor;
         let opts = self.config.editor.options();
         let name = format!(
@@ -971,6 +1109,78 @@ impl App {
         }
         editor.insert_str(&statement, &opts);
         self.run_statement();
+    }
+
+    /// The tables and views the peck line offers for what is typed.
+    pub fn peck_matches(&self) -> Vec<&CatalogObject> {
+        let peck::Command::Table(query) = peck::parse(&self.state.peck.input) else {
+            return Vec::new();
+        };
+        self.state
+            .doc()
+            .connection
+            .and_then(|id| self.state.connection(id))
+            .and_then(|c| c.catalog.as_ref())
+            .map_or_else(Vec::new, |catalog| peck::suggestions(catalog, query))
+    }
+
+    fn peck_action(&mut self, action: Action) {
+        match action {
+            Action::DialogNext | Action::DialogPrev => {
+                let count = self.peck_matches().len();
+                let peck = &mut self.state.peck;
+                if count > 0 {
+                    peck.selected = if action == Action::DialogNext {
+                        (peck.selected + 1) % count
+                    } else {
+                        (peck.selected + count - 1) % count
+                    };
+                }
+            }
+            Action::DialogBackspace => {
+                self.state.peck.input.pop();
+                self.state.peck.selected = 0;
+                self.state.peck.message = None;
+            }
+            Action::DialogClear => self.state.peck = PeckState::default(),
+            Action::DialogSubmit => self.run_peck(),
+            _ => {}
+        }
+    }
+
+    fn run_peck(&mut self) {
+        let message = match peck::parse(&self.state.peck.input) {
+            peck::Command::Empty => {
+                Some("Type a table or view, for example: peck orders".to_string())
+            }
+            peck::Command::NotBuilt(word) => Some(format!("peck {word} is not built yet")),
+            peck::Command::Table(query) => {
+                let connection = self
+                    .state
+                    .doc()
+                    .connection
+                    .and_then(|id| self.state.connection(id));
+                match connection {
+                    None => Some("Not connected. Connect first".to_string()),
+                    Some(c) if c.catalog.is_none() => Some("Reading the schema…".to_string()),
+                    Some(_) => {
+                        let matches = self.peck_matches();
+                        let chosen = matches
+                            .get(self.state.peck.selected)
+                            .or(matches.first())
+                            .map(|o| (o.schema.clone(), o.name.clone()));
+                        match chosen {
+                            Some((schema, table)) => {
+                                self.open_diagram(&schema, &table);
+                                None
+                            }
+                            None => Some(format!("No table or view matches \"{query}\"")),
+                        }
+                    }
+                }
+            }
+        };
+        self.state.peck.message = message;
     }
 
     fn open_history(&mut self) {
@@ -1185,7 +1395,6 @@ impl App {
         let scope = match self.state.dialog {
             Some(Dialog::Picker(_) | Dialog::History(_)) => Scope::Picker,
             Some(Dialog::Find(_)) => Scope::Find,
-            Some(Dialog::Relations(_)) => Scope::Relations,
             Some(Dialog::Form(_) | Dialog::Session(_) | Dialog::Confirm(_)) => Scope::Form,
             Some(Dialog::Password(_)) => Scope::Prompt,
             None => return,
@@ -1204,7 +1413,6 @@ impl App {
     fn dialog_type(&mut self, c: char) {
         match &mut self.state.dialog {
             Some(Dialog::Picker(p) | Dialog::Find(p) | Dialog::History(p)) => p.push(c),
-            Some(Dialog::Relations(_)) => {}
             Some(Dialog::Form(f)) => f.type_char(c),
             Some(Dialog::Session(f)) => f.type_char(c),
             Some(Dialog::Confirm(c0)) => {
@@ -1285,45 +1493,10 @@ impl App {
                     .filter(|o| o.kind.is_relation())
                     .map(|o| (o.schema.clone(), o.name.clone()));
                 match chosen {
-                    Some((schema, table)) => {
-                        self.state.dialog =
-                            Some(Dialog::Relations(relations::View::new(&schema, &table)));
-                    }
+                    Some((schema, table)) => self.open_diagram(&schema, &table),
                     None => self.notice("Relationships are shown for a table or view"),
                 }
             }
-            (Action::DialogNext, Some(Dialog::Relations(v))) => {
-                let count = Self::relation_links(
-                    &self.state.connections,
-                    self.state.docs[self.state.active].connection,
-                    v,
-                )
-                .len();
-                v.select_next(count);
-            }
-            (Action::DialogPrev, Some(Dialog::Relations(v))) => {
-                let count = Self::relation_links(
-                    &self.state.connections,
-                    self.state.docs[self.state.active].connection,
-                    v,
-                )
-                .len();
-                v.select_previous(count);
-            }
-            (Action::DialogSubmit, Some(Dialog::Relations(v))) => {
-                let conn = self.state.docs[self.state.active].connection;
-                let target = Self::relation_links(&self.state.connections, conn, v)
-                    .get(v.selected)
-                    .copied();
-                if let Some(link) = target {
-                    v.follow(&link);
-                }
-            }
-            (Action::DialogBackspace, Some(Dialog::Relations(v))) => {
-                v.back();
-            }
-            (Action::DialogCancel, Some(Dialog::Relations(_))) => self.state.dialog = None,
-            (Action::RelationSample, Some(Dialog::Relations(_))) => self.submit_relation(),
             (Action::DialogNext, Some(Dialog::Form(f))) => f.next_field(),
             (Action::DialogPrev, Some(Dialog::Form(f))) => f.previous_field(),
             (Action::DialogNext | Action::DialogPrev, Some(Dialog::Session(f))) => f.next_field(),
@@ -1707,6 +1880,8 @@ impl App {
                     d.results = Some(Results::new(output));
                     self.state.show_results = true;
                 }
+                // New results take the place of a diagram.
+                self.state.diagram = None;
                 if has_rows && active_doc {
                     self.state.focus = Pane::Results;
                 }
@@ -2068,11 +2243,13 @@ mod tests {
         config.editor.tab_indent = false;
         let mut a = app_with(config);
         // The left column runs top to bottom, then the right column:
-        // Results, Editor, Session, Context.
+        // Results, Editor, Session, Context, Peck.
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Session);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Context);
+        press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(a.state.focus, Pane::Peck);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(a.state.focus, Pane::Results);
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
@@ -2086,7 +2263,7 @@ mod tests {
         let mut a = app();
         alt(&mut a, '1');
         press(&mut a, KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(a.state.focus, Pane::Results);
+        assert_eq!(a.state.focus, Pane::Peck);
         alt(&mut a, '4');
         assert_eq!(a.state.focus, Pane::Session);
     }
@@ -4684,7 +4861,7 @@ mod tests {
     }
 
     #[test]
-    fn alt_z_opens_the_relationship_view_and_enter_follows_a_key() {
+    fn alt_z_opens_the_diagram_in_place_of_the_results_and_enter_follows_a_key() {
         let mut a = app();
         let conn = connected(&mut a);
         a.update(Event::Background(Background::Catalog {
@@ -4694,9 +4871,9 @@ mod tests {
         ctrl(&mut a, 'p');
         type_text(&mut a, "public.orders");
         alt(&mut a, 'z');
-        let Some(Dialog::Relations(view)) = &a.state.dialog else {
-            panic!("expected the relationship view");
-        };
+        assert!(a.state.dialog.is_none(), "the find window closes");
+        assert_eq!(a.state.focus, Pane::Results);
+        let view = a.state.diagram.as_ref().expect("the diagram");
         assert_eq!(
             view.current(),
             &("public".to_string(), "orders".to_string())
@@ -4706,17 +4883,143 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert!(!links[0].outgoing);
         press(&mut a, KeyCode::Enter, KeyModifiers::NONE);
-        let Some(Dialog::Relations(view)) = &a.state.dialog else {
-            panic!("still open");
-        };
-        assert_eq!(view.current().1, "items");
+        assert_eq!(a.state.diagram.as_ref().expect("open").current().1, "items");
         press(&mut a, KeyCode::Backspace, KeyModifiers::NONE);
-        let Some(Dialog::Relations(view)) = &a.state.dialog else {
-            panic!("still open");
-        };
-        assert_eq!(view.current().1, "orders");
+        assert_eq!(
+            a.state.diagram.as_ref().expect("open").current().1,
+            "orders"
+        );
         press(&mut a, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(a.state.dialog.is_none());
+        assert!(a.state.diagram.is_none());
+        assert_eq!(a.state.focus, Pane::Results, "the results are back");
+    }
+
+    #[test]
+    fn running_a_query_replaces_the_diagram_with_its_results() {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        ctrl(&mut a, 'p');
+        type_text(&mut a, "public.orders");
+        alt(&mut a, 'z');
+        assert!(a.state.diagram.is_some());
+        send(&mut a, KeyCode::Char('2'), KeyModifiers::ALT);
+        type_into(&mut a, "select 1");
+        let Command::Run { conn, doc, .. } = press_run(&mut a)[0].clone() else {
+            panic!("run")
+        };
+        a.update(Event::Background(Background::QueryFinished {
+            conn,
+            doc,
+            output: output(vec![rows_set(&[&[Some("1"), None]])], None),
+        }));
+        assert!(a.state.diagram.is_none());
+    }
+
+    fn peck_app() -> (App, ConnId) {
+        let mut a = app();
+        let conn = connected(&mut a);
+        a.update(Event::Background(Background::Catalog {
+            conn,
+            result: Ok(sample_catalog()),
+        }));
+        send(&mut a, KeyCode::Char('5'), KeyModifiers::ALT);
+        (a, conn)
+    }
+
+    #[test]
+    fn alt_5_focuses_the_peck_line_and_typing_matches_tables() {
+        let (mut a, _) = peck_app();
+        assert_eq!(a.state.focus, Pane::Peck);
+        type_into(&mut a, "peck ord");
+        assert_eq!(a.state.peck.input, "peck ord");
+        let found: Vec<String> = a.peck_matches().iter().map(|o| o.path()).collect();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().all(|p| p.ends_with("orders")));
+        assert_eq!(
+            a.state.editor().text(),
+            "",
+            "letters went to the peck line, not the editor"
+        );
+    }
+
+    #[test]
+    fn enter_in_the_peck_line_draws_the_selected_table_and_down_changes_the_choice() {
+        let (mut a, _) = peck_app();
+        type_into(&mut a, "orders");
+        send(&mut a, KeyCode::Down, KeyModifiers::NONE);
+        let second = a.peck_matches()[a.state.peck.selected].path();
+        send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        let view = a.state.diagram.as_ref().expect("the diagram");
+        assert_eq!(format!("{}.{}", view.current().0, view.current().1), second);
+        assert_eq!(a.state.focus, Pane::Results);
+        // Alt+5 goes back to the line, where the text is still there.
+        send(&mut a, KeyCode::Char('5'), KeyModifiers::ALT);
+        assert_eq!(a.state.focus, Pane::Peck);
+        assert_eq!(a.state.peck.input, "orders");
+    }
+
+    #[test]
+    fn the_peck_line_explains_what_it_cannot_do() {
+        let (mut a, _) = peck_app();
+        send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(a
+            .state
+            .peck
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("peck orders")));
+        type_into(&mut a, "peck schema sales");
+        send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(a
+            .state
+            .peck
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("not built yet")));
+        assert!(a.state.diagram.is_none());
+        send(&mut a, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        type_into(&mut a, "zzz");
+        send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(a
+            .state
+            .peck
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("No table or view matches")));
+        // Typing again clears the message.
+        type_into(&mut a, "q");
+        assert!(a.state.peck.message.is_none());
+        send(&mut a, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(a.state.focus, Pane::Context);
+    }
+
+    #[test]
+    fn without_a_schema_the_peck_line_says_to_connect_or_wait() {
+        let mut a = app();
+        send(&mut a, KeyCode::Char('5'), KeyModifiers::ALT);
+        type_into(&mut a, "orders");
+        send(&mut a, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(a
+            .state
+            .peck
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("Connect")));
+        let mut b = app();
+        connected(&mut b);
+        send(&mut b, KeyCode::Char('5'), KeyModifiers::ALT);
+        type_into(&mut b, "orders");
+        send(&mut b, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(b
+            .state
+            .peck
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("Reading the schema")));
     }
 
     #[test]
@@ -4750,7 +5053,7 @@ mod tests {
         type_text(&mut a, "public.orders");
         alt(&mut a, 'z');
         let commands = send(&mut a, KeyCode::Char('s'), KeyModifiers::NONE);
-        assert!(a.state.dialog.is_none());
+        assert!(a.state.diagram.is_none());
         assert_eq!(a.state.focus, Pane::Editor);
         assert_eq!(
             a.state.editor().text(),

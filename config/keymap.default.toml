@@ -32,6 +32,8 @@
 "alt+2" = "focus.editor"
 "ctrl+4" = "focus.session"
 "alt+4" = "focus.session"
+"ctrl+5" = "focus.peck"
+"alt+5" = "focus.peck"
 "ctrl+3" = "focus.results"
 "alt+3" = "focus.results"
 "f6" = "focus.next"
@@ -208,8 +210,19 @@
 "backspace" = "dialog.backspace"
 "ctrl+u" = "dialog.clear"
 
+[peck]
+# The peck command line, under the trends. Type `peck orders` or just `orders`.
+# Letters type into it, so its own keys use Enter, Esc and the arrows.
+"enter" = "dialog.submit"
+"up" = "dialog.prev"
+"down" = "dialog.next"
+"backspace" = "dialog.backspace"
+"ctrl+u" = "dialog.clear"
+"esc" = "focus.commands"
+
 [relations]
-# The relationship view has no search box, so letters are free for commands.
+# The relationship diagram, shown in place of the results. It has no search
+# box, so letters are free for commands.
 "up" = "dialog.prev"
 "down" = "dialog.next"
 # Show the table on the other end of the selected key.

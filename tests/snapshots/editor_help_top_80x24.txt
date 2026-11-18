@@ -13,12 +13,12 @@
 │  │  Ctrl+Right        word right            editor.move_word_right        │  │
 │  │  Ctrl+Shift+End    select to text end    editor.select_buffer_end      │  │
 │No│  Ctrl+Shift+Home   select to text start  editor.select_buffer_start    │  │
-└──│  Ctrl+Shift+Left   select word left      editor.select_word_left       │  │
-┌ ▶│  Ctrl+Shift+Right  select word right     editor.select_word_right      │  │
+└──│  Ctrl+Shift+Left   select word left      editor.select_word_left       │──┘
+┌ ▶│  Ctrl+Shift+Right  select word right     editor.select_word_right      │──┐
 │1 │  Ctrl+Space        show suggestions      completion.trigger            │  │
-│  │  Ctrl+V            paste                 editor.paste                  │  │
+│  │  Ctrl+V            paste                 editor.paste                  │ey│
 │  │  Ctrl+X            cut                   editor.cut                    │  │
 │  │  Ctrl+Y            redo                  editor.redo                   │  │
-└──└─────────────────── Up/Down scroll  ? close  (1/60) ────────────────────┘──┘
+└──└─────────────────── Up/Down scroll  ? close  (1/62) ────────────────────┘──┘
 Ctrl+R run  Esc commands  Ctrl+O connect
  no connection │ focus: Editor │ Ln 1, Col 1

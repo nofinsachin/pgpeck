@@ -22,8 +22,9 @@ name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refu
   past the edge of the loaded rows, or press `Home` or `End`, and pgpeck reads that part of the
   result from the server.
 - **Go back** to what you ran. `Alt+H` lists your statements, newest first, and searches them.
-- **Follow foreign keys.** From a table in the Find window, `Alt+Z` shows what it points to and what
-  points to it. You can walk from table to table and select sample rows.
+- **Follow foreign keys.** Type `peck orders` in the Peck pane, or press `Alt+Z` on a table in the Find
+  window, to see a diagram of what the table points to and what points to it. You can walk from
+  table to table.
 - **Find** tables, views, columns, functions, types and schemas by name with `Ctrl+P`.
 - **Stay safe.** Risky statements wait for a typed `y` or `yes`. The session strip and the status
   bar flag open and failed transactions.
@@ -38,24 +39,28 @@ name. Not done yet: TLS (`ssl_mode` defaults to `disable`, and remote hosts refu
 └───────────────────────────────────────────────┘│Buffer, Statement    │
 ┌ Results ──────────────────────────────────────┐└─────────────────────┘
 │column header │ column header                  │┌ Trends ─────────────┐
-│rows ...                                       ││Connections          │
-│SELECT 2  ·  2 rows  ·  3 ms                   ││Activity             │
-│                                               ││Size, Health         │
-└───────────────────────────────────────────────┘│Deadlocks            │
-┌ Editor ───────────────────────────────────────┐│Largest tables       │
+│rows ...                                       ││Connections, Activity│
+│SELECT 2  ·  2 rows  ·  3 ms                   ││Size, Health, Deadlocks│
+│                                               ││Largest tables       │
+│                                               │└─────────────────────┘
+│                                               │┌ Peck ───────────────┐
+└───────────────────────────────────────────────┘│peck> orders         │
+┌ Editor ───────────────────────────────────────┐│                     │
 │select ...                                     ││                     │
 │                                               │└─────────────────────┘
 │                                               │
 └───────────────────────────────────────────────┘
- hint bar
+ hint bar (on narrow terminals)
  status bar
 ```
 
 - **Session** (top left): the connection's name, where it points (host, user, database) and TLS.
   Production, open transactions and failures are flagged here.
-- **Results** above the **Editor**, in the left column.
-- **Context** and **Trends** in the right column. The logo sits above Context on tall terminals.
-  Trends needs about 18 rows, or 25 with the logo, and is left out below that.
+- **Results** above the **Editor**, in the left column. A relationship diagram takes the place of
+  the results while it is open.
+- **Context**, **Trends** and **Peck** in the right column. The Peck pane is level with the editor.
+  The logo sits above Context on tall terminals. Trends needs about 9 rows, and 13 to show all of
+  its numbers and the five largest tables.
 
 Copied text also goes to your system clipboard, through the terminal (OSC 52). Most modern
 terminals allow this. If yours does not, check its clipboard setting, or paste with the terminal's
@@ -120,8 +125,11 @@ Remove the container with `docker rm -f pgpeck-pg`.
 | | `Alt+T` `V` `M` `O` `F` `Y` `N` | show only tables, views, materialized views, foreign tables, functions, types or schemas. Press again to show all |
 | | `Alt+C` | on a table or view: list only its columns |
 | | `Alt+S` | on a table or view: add `SELECT * ... LIMIT 100` and run it |
-| | `Alt+Z` | on a table or view: the relationship view |
-| Relationship view | `Enter` | show the table on the other end of the selected key |
+| | `Alt+Z` | on a table or view: draw its relationships |
+| Peck pane (`Alt+5`) | `Enter` | draw the selected table |
+| | `Up` `Down` | choose among the matching tables |
+| | `Esc` | back to the context pane |
+| Relationship diagram | `Enter` | show the table on the other end of the selected key |
 | | `Backspace` | back to the table you came from |
 | | `S` | select sample rows of the selected table |
 | | `Esc` | close |
@@ -140,19 +148,29 @@ Before a risky statement runs, pgpeck shows it with the connection name and wait
 
 The session strip and the status bar show an open or failed transaction.
 
-## Relationships
+## Peck: relationships
 
-In the Find window, select a table or view and press `Alt+Z`. The table sits in the middle of a
-diagram. The tables that point at it are on the left, and the tables it points at are on the
-right. Lines join the boxes, with an arrow from the table that holds the foreign key to the table
-it refers to. Each box names the columns of the key, holder first, for example
-`(order_id) → (id)`. A line under the diagram spells out the selected key.
+Peck draws the foreign keys around a table. The **Peck** pane is in the right column, under the
+trends and level with the editor. Press `Alt+5` (or `Tab` until it has focus), type a table or
+view name, and press `Enter`. The word `peck` in front is optional, so `peck orders` and `orders`
+do the same. While you type, the pane lists the tables and views that match. `Up` and `Down`
+choose one. `Esc` leaves the pane.
 
-`Up` and `Down` move the selection through the right side first, then the left. `Enter` makes the
-selected table the middle one, so you can walk through the schema, and `Backspace` goes back. `S`
-selects sample rows of the selected table. When a table has more neighbours than fit, the diagram
-scrolls and says how many are out of view. The keys come from the schema read when you connect.
-They refresh after a statement that changes the schema.
+The diagram takes the place of the results. The table sits in the middle. The tables that point
+at it are on the left, and the tables it points at are on the right. Lines join the boxes, with
+an arrow from the table that holds the foreign key to the table it refers to. Each box names the
+columns of the key, holder first, for example `(order_id) → (id)`. A line under the diagram spells
+out the selected key.
+
+In the diagram, `Up` and `Down` move the selection through the right side first, then the left.
+`Enter` makes the selected table the middle one, so you can walk through the schema, and
+`Backspace` goes back. `S` selects sample rows of the selected table. `Esc` closes the diagram and
+brings the results back. Running a statement closes it too. When a table has more neighbours than
+fit, the diagram scrolls and says how many are out of view.
+
+`Alt+Z` on a table in the Find window opens the same diagram. `peck schema` and `peck function`
+are planned and say "not built yet". The keys come from the schema read when you connect. They
+refresh after a statement that changes the schema.
 
 ## History
 

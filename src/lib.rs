@@ -21,6 +21,7 @@ pub mod keymap;
 pub mod layout;
 pub mod logging;
 pub mod paths;
+pub mod peck;
 pub mod picker;
 pub mod profile;
 pub mod relations;
